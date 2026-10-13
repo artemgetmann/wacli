@@ -25,6 +25,9 @@ concurrency:
 jobs:
   deploy:
     name: Deploy docs
+    # The upstream repository owns the public docs site. Forks retain local
+    # docs builds and CI without attempting an unconfigured Pages deployment.
+    if: github.repository == 'openclaw/wacli'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
