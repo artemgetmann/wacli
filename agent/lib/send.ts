@@ -65,7 +65,7 @@ export function verifyHistory(store: string, chat: string, id: string, kind: str
 }
 
 export async function safeSend(kind: "text" | "file", argv: string[], runner: Runner = runWacli) {
-  if (["1", "true", "yes"].includes((process.env.WACLI_READONLY || "").toLowerCase())) throw new Error("Read-only mode rejects outbound sending");
+  if (["1", "true", "yes", "on"].includes((process.env.WACLI_READONLY || "").trim().toLowerCase())) throw new Error("Read-only mode rejects outbound sending");
   const flags = parseFlags(argv);
   const allowed = new Set(["to", "message", "message-file", "file", "caption", "caption-file", "store", "json", "timeout-ms", "lock-wait-ms", "settle-ms", "grace-ms", "reply-to", "reply-to-sender", "read-policy", "handled-through", "allow-self", "no-preview"]);
   for (const key of Object.keys(flags)) if (!allowed.has(key)) throw new Error(`Unsupported --${key}`);

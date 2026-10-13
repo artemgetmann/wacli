@@ -18,6 +18,7 @@ function mediaCommand(binary: string, args: string[], timeout = 60_000): Promise
 // Credentials are explicit standalone configuration, not runtime imports from
 // another project. Provisioning reads the key from stdin and never returns it.
 export async function configureTranscription(argv: string[]) {
+  if (["1", "true", "yes", "on"].includes((process.env.WACLI_READONLY || "").trim().toLowerCase())) throw new Error("Read-only mode rejects transcription configuration changes");
   const flags = parseFlags(argv, ["json"]);
   for (const key of Object.keys(flags)) if (!["store", "model", "json"].includes(key)) throw new Error(`Unsupported --${key}`);
   const chunks: Buffer[] = [];

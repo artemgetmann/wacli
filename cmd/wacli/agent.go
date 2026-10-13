@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/openclaw/wacli/agent"
 	"github.com/spf13/cobra"
@@ -18,6 +19,15 @@ func newAgentCmd(flags *rootFlags) *cobra.Command {
 			if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
 				return cmd.Help()
 			}
+			// Cobra passes leading root flags through an unparsed child. Consume
+			// only that prefix, stopping at the workflow name; its remaining
+			// payload/helper flags must reach Node byte-for-byte.
+			globals := cmd.Root().PersistentFlags()
+			globals.SetInterspersed(false)
+			if err := globals.Parse(args); err != nil {
+				return err
+			}
+			args = globals.Args()
 			if len(args) == 0 {
 				return fmt.Errorf("an agent workflow is required; see docs/agent.md")
 			}
@@ -25,8 +35,13 @@ func newAgentCmd(flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if flags.asJSON {
+			if flags.asJSON && !slices.Contains(args, "--json") {
 				args = append(args, "--json")
+			}
+			if slices.Contains([]string{"send-text", "send-file", "configure-transcription"}, args[0]) {
+				if err := flags.requireWritable(); err != nil {
+					return err
+				}
 			}
 			return agent.Run(cmd.Context(), store, flags.isReadOnly(), args)
 		},

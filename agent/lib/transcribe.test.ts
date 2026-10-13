@@ -4,9 +4,15 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { transcribe } from "./transcribe.ts";
+import { transcribe, configureTranscription } from "./transcribe.ts";
 
 const profile = { provider: "openai" as const, model: "gpt-4o-mini-transcribe", apiKey: "test-only" };
+test("read-only mode refuses credential provisioning before stdin or files", async () => {
+  const previous = process.env.WACLI_READONLY;
+  process.env.WACLI_READONLY = "on";
+  try { await assert.rejects(configureTranscription([]), /Read-only mode/); }
+  finally { if (previous === undefined) delete process.env.WACLI_READONLY; else process.env.WACLI_READONLY = previous; }
+});
 test("named and extensionless Opus normalize before provider; original remains", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wacli-audio-test-"));
   try {
