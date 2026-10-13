@@ -78,6 +78,7 @@ func execute(args []string) error {
 	rootCmd.PersistentFlags().BoolVar(&flags.readOnly, "read-only", false, "reject commands that intentionally write WhatsApp or the local store (or set WACLI_READONLY=1)")
 
 	rootCmd.AddCommand(newVersionCmd())
+	rootCmd.AddCommand(newAgentCmd(&flags))
 	rootCmd.AddCommand(newAccountsCmd(&flags))
 	rootCmd.AddCommand(newDoctorCmd(&flags))
 	rootCmd.AddCommand(newAuthCmd(&flags))

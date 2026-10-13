@@ -91,6 +91,22 @@ func TestUpsertSentReactionSurfacesStoreFailure(t *testing.T) {
 
 type fakeTextResolver struct{}
 
+func TestPersistOutboundTextPreservesQuoteMetadata(t *testing.T) {
+	_, db, _ := newSendFileFixture(t)
+	defer db.Close()
+	chat := types.NewJID("15550000001", types.DefaultUserServer)
+	if err := persistOutboundTextWith(context.Background(), db, fakeTextResolver{}, chat, "QUOTE-REPLY", "hello", time.Now().UTC(), "ORIGINAL", "15550000002@s.whatsapp.net"); err != nil {
+		t.Fatal(err)
+	}
+	message, err := db.GetMessage(chat.String(), "QUOTE-REPLY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.QuotedMsgID != "ORIGINAL" || message.QuotedSenderJID != "15550000002@s.whatsapp.net" {
+		t.Fatalf("accepted quote metadata lost: id=%q sender=%q", message.QuotedMsgID, message.QuotedSenderJID)
+	}
+}
+
 func (fakeTextResolver) ResolveChatName(context.Context, types.JID, string) string { return "Chat" }
 func (fakeTextResolver) ResolveLIDToPN(_ context.Context, jid types.JID) types.JID { return jid }
 

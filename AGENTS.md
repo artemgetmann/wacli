@@ -1,5 +1,11 @@
 # Repository Guidelines
 
+## Standalone fork direction
+- Read `VISION.md` and `docs/architecture/overview.md` before changing workflow ownership.
+- `docs/agent.md` owns send/read/quote/credential proof boundaries.
+- Never add framework runtime imports or put private account data in this repository.
+- Retain upstream commands; agent helpers ship with the binary and use its exact version.
+
 ## Project Structure
 - `cmd/wacli/`: CLI command wiring (auth, sync, messages, send, media, contacts, chats, groups, history, presence, doctor).
 - `internal/app/`: core app, whatsmeow event handling, backfill, sync idle logic.

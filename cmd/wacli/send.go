@@ -143,7 +143,7 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 
 			now := time.Now().UTC()
 			chat := toJID
-			storeErr := persistOutboundText(ctx, a, chat, string(msgID), message, now)
+			storeErr := persistOutboundText(ctx, a, chat, string(msgID), message, now, replyTo, replyToSender)
 			warnSendStoreFailure(os.Stderr, string(msgID), storeErr)
 
 			waitForPostSendRetryReceipts(ctx, postSendWait)
@@ -175,8 +175,8 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 	return cmd
 }
 
-func persistOutboundText(ctx context.Context, a *app.App, chat types.JID, msgID, text string, now time.Time) error {
-	return persistOutboundTextWith(ctx, a.DB(), a.WA(), chat, msgID, text, now)
+func persistOutboundText(ctx context.Context, a *app.App, chat types.JID, msgID, text string, now time.Time, quote ...string) error {
+	return persistOutboundTextWith(ctx, a.DB(), a.WA(), chat, msgID, text, now, quote...)
 }
 
 type outboundTextResolver interface {
@@ -192,22 +192,38 @@ func canonicalOutboundChat(ctx context.Context, resolver outboundTextResolver, c
 	return chat
 }
 
-func persistOutboundTextWith(ctx context.Context, db *store.DB, resolver outboundTextResolver, chat types.JID, msgID, text string, now time.Time) error {
+func persistOutboundTextWith(ctx context.Context, db *store.DB, resolver outboundTextResolver, chat types.JID, msgID, text string, now time.Time, quote ...string) error {
 	chat = canonicalOutboundChat(ctx, resolver, chat)
+	// Retain the quote that was accepted on the wire. This is metadata proof,
+	// not proof that another device rendered the quote bubble.
+	var quoteID, quoteSender string
+	if len(quote) > 0 {
+		quoteID = strings.TrimSpace(quote[0])
+	}
+	if len(quote) > 1 {
+		quoteSender = strings.TrimSpace(quote[1])
+	}
+	if quoteID != "" && quoteSender == "" {
+		if original, err := db.GetMessage(chat.String(), quoteID); err == nil {
+			quoteSender = original.SenderJID
+		}
+	}
 	chatName := resolver.ResolveChatName(ctx, chat, "")
 	var storeErr error
 	if err := db.UpsertChat(chat.String(), chatKindFromJID(chat), chatName, now); err != nil {
 		storeErr = fmt.Errorf("chat update: %w", err)
 	}
 	if err := db.UpsertMessage(store.UpsertMessageParams{
-		ChatJID:    chat.String(),
-		ChatName:   chatName,
-		MsgID:      msgID,
-		SenderJID:  "",
-		SenderName: "me",
-		Timestamp:  now,
-		FromMe:     true,
-		Text:       text,
+		ChatJID:         chat.String(),
+		ChatName:        chatName,
+		MsgID:           msgID,
+		SenderJID:       "",
+		SenderName:      "me",
+		Timestamp:       now,
+		FromMe:          true,
+		Text:            text,
+		QuotedMsgID:     quoteID,
+		QuotedSenderJID: quoteSender,
 	}); err != nil {
 		storeErr = errors.Join(storeErr, fmt.Errorf("message update: %w", err))
 	}
