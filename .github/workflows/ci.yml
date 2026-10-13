@@ -29,7 +29,9 @@ jobs:
           setup-node: "true"
           node-version: "26"
           setup-pnpm: "true"
-          apt-packages: "build-essential"
+          # Agent audio tests use real codec fixtures; the runner must have
+          # the same documented FFmpeg/ffprobe dependency as the CLI workflow.
+          apt-packages: "build-essential ffmpeg"
 
       - name: pnpm format:check
         run: pnpm format:check
