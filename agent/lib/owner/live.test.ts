@@ -8,6 +8,7 @@ import {
   hasCurrentRunConnection,
   logRunMarkerMatches,
   readLogTail,
+  ensureOwner,
 } from "./live.ts";
 
 test("new and legacy exact owner argv match, unrelated processes do not", () => {
@@ -66,6 +67,72 @@ test("over-limit and partial UTF-8 evidence is visibly incomplete", async () => 
     }), false);
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("large current run needs only recent complete event and forty diagnostics", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wacli-large-log-"));
+  try {
+    const file = path.join(dir, "sync.log");
+    const runId = "recent-run";
+    const marker = JSON.stringify({ agentOwnerRun: runId }) + "\n";
+    await fs.writeFile(file, marker + "old diagnostic\n".repeat(150_000) +
+      '{"event":"connected"}\n' + Array.from({ length: 45 }, (_, i) => `recent-${i}\n`).join(""));
+    const read = await readLogTail(file, 40);
+    assert.equal(read.incomplete, false);
+    assert.equal(read.lastLifecycleEvent, "connected");
+    assert.equal(read.lines.length, 40);
+    assert.ok(read.scannedBytes < 1024 * 1024);
+    assert.equal(await logRunMarkerMatches(file, 0, runId), true);
+    assert.equal(hasCurrentRunConnection({
+      ownerRunning: true, ownerCommandMatches: true, lockHeldByOwner: true,
+      logIdentityMatches: true, logEvidenceIncomplete: read.incomplete,
+      lastLifecycleEvent: read.lastLifecycleEvent,
+    }), true);
+    await fs.appendFile(file, '{"event":"disconnected"');
+    const partial = await readLogTail(file, 40);
+    assert.equal(partial.lines.at(-1), '{"event":"disconnected"');
+    assert.equal(partial.lastLifecycleEvent, "connected");
+    assert.equal(partial.incomplete, true);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("UTF-8 split across backward blocks is decoded after assembly", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wacli-utf8-log-"));
+  try {
+    const file = path.join(dir, "sync.log");
+    const marker = '{"agentOwnerRun":"utf8"}\n';
+    const body = '\n{"event":"connected"}\n' +
+      Array.from({ length: 30 }, (_, i) => `line-${i}\n`).join("");
+    const filler = "z".repeat(16_382 - Buffer.byteLength(body) - 1) + "\n";
+    assert.equal(Buffer.byteLength(body + filler), 16_382);
+    await fs.writeFile(file, marker + "🙂" + body + filler);
+    const read = await readLogTail(file, 40);
+    assert.equal(read.incomplete, false);
+    assert.equal(read.lastLifecycleEvent, "connected");
+    assert.equal(read.lines.includes("🙂"), true);
+    assert.equal(read.lines.some((line) => line.includes("�")), false);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("read-only mode rejects owner ensure before touching the store", async () => {
+  const previous = process.env.WACLI_READONLY;
+  process.env.WACLI_READONLY = "yes";
+  try {
+    await assert.rejects(
+      ensureOwner({
+        command: "ensure", json: true, storeDir: path.join(os.tmpdir(), "not-created-owner-test"),
+        settleMs: 1, graceMs: 1, timeoutMs: 1, tailLines: 40,
+      }),
+      /read-only mode/,
+    );
+  } finally {
+    if (previous === undefined) delete process.env.WACLI_READONLY;
+    else process.env.WACLI_READONLY = previous;
   }
 });
 

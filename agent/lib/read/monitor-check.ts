@@ -1,7 +1,7 @@
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildRecentReplyCliResult } from "./recent-reply.ts";
+import { defaultStoreDir } from "../owner/store.ts";
 
 type Args = {
   dbPath: string;
@@ -25,12 +25,12 @@ Examples:
   process.exit(1);
 }
 
-function defaultDbPath() {
-  return path.join(process.env.HOME ?? "~", ".wacli", "wacli.db");
+export function defaultDbPath() {
+  return path.join(defaultStoreDir(), "wacli.db");
 }
 
-function defaultStateDir() {
-  return path.join(os.homedir(), ".wacli", "agent-monitor-state");
+export function defaultStateDir() {
+  return path.join(defaultStoreDir(), "agent-monitor-state");
 }
 
 export function resolveMonitorStateFile(target: string, stateDir: string) {

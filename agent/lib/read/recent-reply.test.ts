@@ -33,6 +33,22 @@ test("read-only lookup resolves only a DB-proven sibling and preserves unread st
     assert.deepEqual(db.prepare("SELECT jid, unread_count FROM chats ORDER BY jid").all(), before);
     assert.equal(resolveMonitorStateFile("111@s.whatsapp.net", path.join(dir, "state")),
       path.join(dir, "state", "111_s_whatsapp_net.json"));
+    const previous = process.env.WACLI_READONLY;
+    process.env.WACLI_READONLY = "1";
+    try {
+      const stateFile = path.join(dir, "state", "target.json");
+      await assert.rejects(buildRecentReplyCliResult({
+        dbPath, json: true, lastProcessedMsgId: null, stateFile, target: "111",
+      }), /read-only mode/);
+      await assert.rejects(fs.stat(stateFile), { code: "ENOENT" });
+      const stillReadable = await buildRecentReplyCliResult({
+        dbPath, json: true, lastProcessedMsgId: null, stateFile: null, target: "111",
+      });
+      assert.equal(stillReadable.latestInboundReply?.msgId, "in-1");
+    } finally {
+      if (previous === undefined) delete process.env.WACLI_READONLY;
+      else process.env.WACLI_READONLY = previous;
+    }
   } finally {
     db.close();
     await fs.rm(dir, { recursive: true, force: true });

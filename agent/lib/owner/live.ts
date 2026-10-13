@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { defaultStoreDir, requireWritable } from "./store.ts";
 
 type Command = "status" | "ensure" | "stop";
 
@@ -90,10 +91,6 @@ Notes:
     sync owner holds the store lock, which is not a live connection probe.`);
 }
 
-function defaultStoreDir() {
-  return path.join(os.homedir(), ".wacli");
-}
-
 function parsePositiveInt(raw: string, flag: string) {
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -102,7 +99,7 @@ function parsePositiveInt(raw: string, flag: string) {
   return parsed;
 }
 
-function parseArgs(argv: string[]): Flags {
+export function parseArgs(argv: string[]): Flags {
   const [commandRaw, ...rest] = argv;
   if (!commandRaw || commandRaw === "-h" || commandRaw === "--help") {
     usage();
@@ -274,7 +271,11 @@ export function commandLooksLikeExpectedOwner(command: string, storeDir: string)
     // Older owners omitted --store and therefore always used wacli's default.
     // Never extend that legacy trust to a custom store: doing so could signal a
     // default-store owner recorded in the wrong custom-store PID file.
-    (path.resolve(storeDir) === path.resolve(defaultStoreDir()) &&
+    // WACLI_AGENT_STORE only selects this helper's store. A legacy owner that
+    // omitted --store followed wacli's own WACLI_STORE_DIR/default path.
+    (path.resolve(storeDir) === path.resolve(
+      process.env.WACLI_STORE_DIR?.trim() || path.join(os.homedir(), ".wacli"),
+    ) &&
       (args === "sync --follow --json" || args === "sync --follow --events"))
   );
 }
@@ -288,17 +289,30 @@ export async function readLogTail(
   logPath: string,
   tailLines: number,
   runStartOffset = 0,
-): Promise<{ lines: string[]; incomplete: boolean; identity?: { dev: number; ino: number }; lastLifecycleEvent?: LifecycleEvent }> {
+): Promise<{
+  lines: string[];
+  incomplete: boolean;
+  identity?: { dev: number; ino: number };
+  lastLifecycleEvent?: LifecycleEvent;
+  scannedBytes: number;
+}> {
   let handle: fsp.FileHandle | undefined;
   try {
     handle = await fsp.open(logPath, "r");
     const stat = await handle.stat();
     const end = stat.size;
-    // Read backwards in bounded chunks. A partial leading line is dropped so
-    // UTF-8 boundaries and a very long line cannot masquerade as an event.
+    if (runStartOffset > end) {
+      return { lines: [], incomplete: true, identity: { dev: stat.dev, ino: stat.ino }, scannedBytes: 0 };
+    }
+    // Read backwards until both the requested diagnostics and the latest
+    // complete lifecycle event are found. A 1 MiB cap still bounds malformed
+    // or event-free logs, independent of the total historical log size.
     let cursor = end;
     let bytes = 0;
     const blocks: Buffer[] = [];
+    let diagnosticLines: string[] = [];
+    let lastLifecycleEvent: LifecycleEvent | undefined;
+    let trailingPartial = false;
     while (cursor > runStartOffset && bytes < 1024 * 1024) {
       const count = Math.min(16 * 1024, cursor - runStartOffset, 1024 * 1024 - bytes);
       if (count <= 0) break;
@@ -308,21 +322,33 @@ export async function readLogTail(
       if (bytesRead !== count) throw new Error("Short owner log read");
       blocks.unshift(block);
       bytes += count;
+      const text = Buffer.concat(blocks).toString("utf8");
+      const raw = text.split(/\r?\n/u);
+      // Only the leading fragment may begin mid-codepoint. Preserve the last
+      // unterminated line for display, but never use it as lifecycle evidence.
+      if (cursor > runStartOffset) raw.shift();
+      trailingPartial = end > runStartOffset && !text.endsWith("\n");
+      diagnosticLines = raw.map((line) => line.trimEnd()).filter(Boolean);
+      const completeLines = trailingPartial ? raw.slice(0, -1) : raw;
+      lastLifecycleEvent = inferLifecycleEvent(
+        completeLines.map((line) => line.trimEnd()).filter(Boolean),
+      );
+      if (diagnosticLines.length >= tailLines && lastLifecycleEvent) break;
     }
-    const incomplete = cursor > runStartOffset;
-    const text = Buffer.concat(blocks).toString("utf8");
-    const raw = text.split(/\r?\n/u);
-    if (incomplete) raw.shift();
-    if (end > runStartOffset && !text.endsWith("\n")) raw.pop();
-    const completeLines = raw.map((line) => line.trimEnd()).filter(Boolean);
+    // Reading less than the whole run is safe once the latest event and
+    // requested display tail are complete. Partial trailing NDJSON remains
+    // unconfirmed because it might become a newer disconnection event.
+    const incomplete = trailingPartial ||
+      (cursor > runStartOffset && (diagnosticLines.length < tailLines || !lastLifecycleEvent));
     return {
-      lines: completeLines.slice(-tailLines),
+      lines: diagnosticLines.slice(-tailLines),
       incomplete,
       identity: { dev: stat.dev, ino: stat.ino },
-      lastLifecycleEvent: inferLifecycleEvent(completeLines),
+      lastLifecycleEvent,
+      scannedBytes: bytes,
     };
   } catch {
-    return { lines: [], incomplete: true };
+    return { lines: [], incomplete: true, scannedBytes: 0 };
   } finally {
     await handle?.close();
   }
@@ -522,6 +548,7 @@ export async function ensureOwner(
   flags: Flags,
   deps: EnsureOwnerDeps = defaultEnsureOwnerDeps,
 ): Promise<LiveStatus> {
+  requireWritable("owner ensure");
   await fsp.mkdir(flags.storeDir, { recursive: true, mode: 0o700 });
   const files = resolveOwnerFiles(flags.storeDir);
 
@@ -602,6 +629,7 @@ export async function ensureOwner(
 }
 
 async function stopOwner(flags: Flags): Promise<LiveStatus> {
+  requireWritable("owner stop");
   const files = resolveOwnerFiles(flags.storeDir);
   const pidFile = await readPidFile(files.pidPath);
   const ownerPid = pidFile?.pid;

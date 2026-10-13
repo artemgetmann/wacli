@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { defaultStoreDir, requireWritable } from "./store.ts";
 
 type Flags = {
   json: boolean;
@@ -121,13 +122,14 @@ Notes:
   - --refresh adds a one-shot sync using 'wacli sync --once --idle-exit <duration> --json'.`);
 }
 
-function parseArgs(argv: string[]): Flags {
+export function parseArgs(argv: string[]): Flags {
   const flags: Flags = {
     json: false,
     refresh: false,
     ensureOwner: false,
     timeoutMs: 15_000,
     idleExit: "5s",
+    store: defaultStoreDir(),
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -337,6 +339,9 @@ function emit(report: HealthReport, asJson: boolean) {
 
 async function main() {
   const flags = parseArgs(process.argv.slice(2));
+  if (flags.ensureOwner || flags.refresh) {
+    requireWritable(flags.ensureOwner ? "owner ensure" : "refresh");
+  }
   const baseArgs = buildBaseArgs(flags);
   let owner = await readLiveOwnerStatus(flags, "status");
 

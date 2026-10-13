@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { performance } from "node:perf_hooks";
+import { defaultStoreDir, requireWritable } from "../owner/store.ts";
 import {
   decideWacliMonitorBootstrapAction,
   resolvePreferredMonitorChatJid,
@@ -77,7 +78,7 @@ Examples:
 
 export function parseArgs(argv: string[]): Args {
   const args: Args = {
-    dbPath: path.join(process.env.HOME ?? "~", ".wacli", "wacli.db"),
+    dbPath: path.join(defaultStoreDir(), "wacli.db"),
     json: false,
     lastProcessedMsgId: null,
     refresh: false,
@@ -285,6 +286,7 @@ export async function forceRefreshAndRead(
   args: Args,
   deps: RefreshDeps = defaultRefreshDeps,
 ): Promise<{ refresh: RefreshResult; result: RecentReplyCliResult }> {
+  requireWritable("forced refresh");
   const timingsMs: Record<string, number> = {};
   const totalStart = performance.now();
   // Record failed stages too: a long catch-up and a failed restoration must be
@@ -406,6 +408,7 @@ async function writeMonitorState(
   stateFile: string,
   payload: { lastProcessedMsgId: string; ts: number },
 ): Promise<void> {
+  requireWritable("monitor state update");
   await fs.mkdir(path.dirname(stateFile), { recursive: true });
   await fs.writeFile(
     stateFile,
