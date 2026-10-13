@@ -110,6 +110,7 @@ export async function buildMonitorCheckCliResult(args: Args): Promise<{
   seedJids: string[];
   seedPhones: string[];
   identityNames: string[];
+  monitorAckToken: string | null;
 }> {
   const target = args.target!.trim();
   const resolvedStateFile =

@@ -202,6 +202,15 @@ func (a *App) Sync(ctx context.Context, opts SyncOptions) (SyncResult, error) {
 	if err := a.migrateHistoricalLIDs(syncCtx); err != nil {
 		return SyncResult{MessagesStored: messagesStored.Load()}, err
 	}
+	// Start the local delegate as soon as the connected store is usable. Chat
+	// app-state recovery can wait for missing keys; it must not hide the send
+	// endpoint for that whole wait. State-changing delegated operations already
+	// serialize with recovery in the app; sends and read-self do not need it.
+	if opts.AfterConnect != nil {
+		if err := opts.AfterConnect(syncCtx); err != nil {
+			return SyncResult{MessagesStored: messagesStored.Load()}, err
+		}
+	}
 	a.syncAppStateDeltas(syncCtx, appStateRecoveries)
 
 	// Optional: bootstrap imports (helps contacts/groups management without waiting for events).
@@ -232,12 +241,6 @@ func (a *App) Sync(ctx context.Context, opts SyncOptions) (SyncResult, error) {
 			)
 		}
 	}
-	if opts.AfterConnect != nil {
-		if err := opts.AfterConnect(syncCtx); err != nil {
-			return SyncResult{MessagesStored: messagesStored.Load()}, err
-		}
-	}
-
 	var err error
 	if opts.Mode == SyncModeFollow {
 		_, err = a.runSyncFollow(syncCtx, opts.MaxReconnect, opts.PresenceMode, &messagesStored, &connectionEpoch, disconnected, loggedOut, staleReconnect)

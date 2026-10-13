@@ -37,9 +37,11 @@ test("read-only lookup resolves only a DB-proven sibling and preserves unread st
     process.env.WACLI_READONLY = "1";
     try {
       const stateFile = path.join(dir, "state", "target.json");
-      await assert.rejects(buildRecentReplyCliResult({
+      const checked = await buildRecentReplyCliResult({
         dbPath, json: true, lastProcessedMsgId: null, stateFile, target: "111",
-      }), /read-only mode/);
+      });
+      assert.equal(checked.monitorStatus, "new_message");
+      assert.equal(typeof checked.monitorAckToken, "string");
       await assert.rejects(fs.stat(stateFile), { code: "ENOENT" });
       const stillReadable = await buildRecentReplyCliResult({
         dbPath, json: true, lastProcessedMsgId: null, stateFile: null, target: "111",

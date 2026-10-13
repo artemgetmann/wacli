@@ -12,8 +12,10 @@ Never send without explicit current-chat recipient/payload authority.
 
 - Read an exact conversation: `wacli agent recent-reply --target <phone-or-jid> --json`.
 - Monitor only an explicitly scoped target: `wacli agent monitor-check --target <target> --state-file <private-state-path> --json`.
+- Checks never acknowledge work. After every required downstream step succeeds, call `wacli agent monitor-ack --target <same-target> --chat <snapshot-chat> --id <snapshot-id> --ack-token <returned-token> --state-file <same-state-path> --json`. Use the exact returned snapshot and token; never acknowledge a newer message or blocked/unhandled work. A failed acknowledgement leaves work pending and never permits resending an accepted message.
 - Ordinary status: `wacli agent health --json` or `wacli agent live status --json`.
 - Start a missing owner when needed: `wacli agent live ensure --json`.
+- `connected` proves a current-run connection; `sendReady` additionally verifies the matched owner's local command server. Safe-send checks readiness before its one dispatch. Neither field proves message freshness.
 - Explicit stale-history recovery: `wacli agent recent-reply --target <target> --refresh --json`. Try an ordinary read first and establish missing/stale content; never add refresh to routine drafts or checks.
 - Download exact audio/media with `wacli --read-only media download --chat <jid> --id <id> --output <private-path> --json`; transcribe using `wacli agent transcribe --file <path> --json`.
 - Send the approved exact text through `wacli agent send-text --to <exact-phone-or-jid> --message-file <path|-> --json`.

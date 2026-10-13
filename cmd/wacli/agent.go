@@ -12,7 +12,7 @@ import (
 // WhatsApp protocol mechanics. Child flags are parsed by the packaged helper.
 func newAgentCmd(flags *rootFlags) *cobra.Command {
 	return &cobra.Command{
-		Use:                "agent <send-text|send-file|recent-reply|monitor-check|health|live|transcribe> [flags]",
+		Use:                "agent <send-text|send-file|recent-reply|monitor-check|monitor-ack|health|live|transcribe> [flags]",
 		Short:              "Standalone verified messaging and read-only agent workflows (Node 24+)",
 		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -38,7 +38,7 @@ func newAgentCmd(flags *rootFlags) *cobra.Command {
 			if flags.asJSON && !slices.Contains(args, "--json") {
 				args = append(args, "--json")
 			}
-			if slices.Contains([]string{"send-text", "send-file", "configure-transcription"}, args[0]) {
+			if slices.Contains([]string{"send-text", "send-file", "monitor-ack", "configure-transcription"}, args[0]) {
 				if err := flags.requireWritable(); err != nil {
 					return err
 				}

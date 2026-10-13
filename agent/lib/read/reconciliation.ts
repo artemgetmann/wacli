@@ -438,6 +438,8 @@ export function findLatestInboundReplyAcrossResolvedChats(params: {
         seedMessage = seedRows[0] ? toConversationTurn(seedRows[0]) : null;
       }
 
+      // WhatsApp timestamps have second precision. Break ties by arrival order
+      // so a same-second message received after a monitor snapshot stays new.
       const inbound = db
         .prepare(
           `SELECT chat_jid AS chatJid,
@@ -454,7 +456,7 @@ export function findLatestInboundReplyAcrossResolvedChats(params: {
            FROM messages
            WHERE from_me = 0
              AND chat_jid IN (${candidateJids.map(() => "?").join(",")})
-           ORDER BY ts DESC`,
+           ORDER BY ts DESC, rowid DESC`,
         )
         .all(...candidateJids) as unknown as WacliReplyRecord[];
 

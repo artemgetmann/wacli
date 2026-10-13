@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -8,6 +7,9 @@ import { defaultStoreDir, requireWritable } from "../owner/store.ts";
 import {
   decideWacliMonitorBootstrapAction,
   resolvePreferredMonitorChatJid,
+  readMonitorState,
+  verifyMonitorScope,
+  encodeMonitorAckSnapshot,
 } from "./monitor.ts";
 import { findLatestInboundReplyAcrossResolvedChats } from "./reconciliation.ts";
 
@@ -45,12 +47,6 @@ type StoreLock = {
 };
 
 const execFileAsync = promisify(execFile);
-
-type MonitorState = {
-  lastProcessedMsgId?: string;
-  msgId?: string;
-  ts?: number;
-};
 
 type RecentReplyCliResult = Awaited<ReturnType<typeof buildRecentReplyCliResult>>;
 
@@ -391,40 +387,6 @@ export async function forceRefreshAndRead(
   }
 }
 
-async function readMonitorState(stateFile: string): Promise<MonitorState | null> {
-  try {
-    const raw = await fs.readFile(stateFile, "utf8");
-    const parsed = JSON.parse(raw) as MonitorState;
-    if (!parsed || typeof parsed !== "object") {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-async function writeMonitorState(
-  stateFile: string,
-  payload: { lastProcessedMsgId: string; ts: number },
-): Promise<void> {
-  requireWritable("monitor state update");
-  await fs.mkdir(path.dirname(stateFile), { recursive: true });
-  await fs.writeFile(
-    stateFile,
-    `${JSON.stringify(
-      {
-        lastProcessedMsgId: payload.lastProcessedMsgId,
-        msgId: payload.lastProcessedMsgId,
-        ts: payload.ts,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-}
-
 export async function buildRecentReplyCliResult(args: Args): Promise<{
   target: string;
   seedJids: string[];
@@ -443,13 +405,19 @@ export async function buildRecentReplyCliResult(args: Args): Promise<{
   monitorStatus?: "new_message" | "no_change";
   status?: "new_message" | "no_change";
   stateFile?: string | null;
+  monitorAckToken: string | null;
 }> {
+  // Capture the previous baseline before looking up messages. If another
+  // worker acknowledges during lookup, this token must fail the later CAS
+  // rather than pairing an older database snapshot with its newer baseline.
+  const baseline = args.stateFile ? await readMonitorState(args.stateFile) : null;
+  const persistedState = baseline?.state;
+  verifyMonitorScope(persistedState ?? null, args.target!, args.dbPath);
   const result = findLatestInboundReplyAcrossResolvedChats({
     dbPath: args.dbPath,
     target: args.target!,
   });
   const preferredMonitorChatJid = resolvePreferredMonitorChatJid(result);
-  const persistedState = args.stateFile ? await readMonitorState(args.stateFile) : null;
   const effectiveLastProcessedMsgId =
     persistedState?.lastProcessedMsgId ?? persistedState?.msgId ?? args.lastProcessedMsgId;
   const bootstrapDecision = decideWacliMonitorBootstrapAction({
@@ -461,16 +429,18 @@ export async function buildRecentReplyCliResult(args: Args): Promise<{
       ? "new_message"
       : "no_change"
     : undefined;
-  if (
+  // Check never advances the baseline. Transcription, interpretation and relay
+  // happen in the caller; only its later explicit acknowledgement may persist.
+  const monitorAckToken =
     args.stateFile &&
     bootstrapDecision.action === "process-latest" &&
-    result.latestInboundReply
-  ) {
-    await writeMonitorState(args.stateFile, {
-      lastProcessedMsgId: result.latestInboundReply.msgId,
-      ts: result.latestInboundReply.ts,
-    });
-  }
+    result.latestInboundReply && baseline
+      ? encodeMonitorAckSnapshot({
+          version: 1, target: result.target, dbPath: path.resolve(args.dbPath),
+          stateFile: path.resolve(args.stateFile), previousStateHash: baseline.hash,
+          chatJid: result.latestInboundReply.chatJid, msgId: result.latestInboundReply.msgId,
+        })
+      : null;
 
   return {
     ...result,
@@ -479,6 +449,7 @@ export async function buildRecentReplyCliResult(args: Args): Promise<{
     monitorStatus,
     status: monitorStatus,
     stateFile: args.stateFile,
+    monitorAckToken,
   };
 }
 

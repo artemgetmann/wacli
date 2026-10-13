@@ -20,6 +20,7 @@ import (
 const (
 	sendDelegateVersion       = 1
 	sendDelegateSocketName    = ".send.sock"
+	sendDelegatePingKind      = "ping"
 	sendDelegateResponseGrace = 5 * time.Second
 	// sendDelegateReplyMargin is reserved before the caller's deadline so a
 	// refusal can reach the caller before it gives up on the connection. An
@@ -96,6 +97,7 @@ type sendDelegateResponse struct {
 	ReceiptType    string               `json:"receipt_type,omitempty"`
 	Contacts       []contactCheckResult `json:"contacts,omitempty"`
 	Presence       *app.PresenceState   `json:"presence,omitempty"`
+	OwnerPID       int                  `json:"owner_pid,omitempty"`
 }
 
 type sendDelegateExecutor func(context.Context, sendDelegateRequest) (sendDelegateResponse, error)
@@ -252,6 +254,18 @@ func handleSendDelegateConn(ctx context.Context, conn net.Conn, execute sendDele
 	// paced request may intentionally run longer than five minutes, so keep the
 	// transport alive through its budget and the final response write.
 	_ = conn.SetDeadline(deadline.Add(sendDelegateResponseGrace))
+
+	if req.Kind == sendDelegatePingKind {
+		// Read-only readiness bypasses sends, pacing and app-state recovery.
+		// The PID binds a responsive socket to the already verified owner;
+		// socket filesystem permissions supply the local authentication boundary.
+		resp := sendDelegateResponse{OK: true, Action: sendDelegatePingKind, OwnerPID: os.Getpid()}
+		if req.Version != sendDelegateVersion || requestCtx.Err() != nil {
+			resp = sendDelegateResponse{OK: false, Error: "unsupported or expired readiness probe"}
+		}
+		_ = json.NewEncoder(conn).Encode(resp)
+		return
+	}
 
 	if req.Kind == chatStateKind {
 		// App-state writes are serialized by the app and can wait minutes on

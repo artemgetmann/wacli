@@ -3,20 +3,112 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import net from "node:net";
 import {
   commandLooksLikeExpectedOwner,
   hasCurrentRunConnection,
   logRunMarkerMatches,
   readLogTail,
   ensureOwner,
+  probeSendReady,
 } from "./live.ts";
 
 test("new and legacy exact owner argv match, unrelated processes do not", () => {
   const store = path.join(os.tmpdir(), "wacli-owner-test");
-  assert.equal(commandLooksLikeExpectedOwner(`/usr/local/bin/wacli --store ${store} sync --follow --events`, store), true);
-  assert.equal(commandLooksLikeExpectedOwner(`/usr/local/bin/wacli --store ${store} sync --follow --json`, store), true);
+  assert.equal(commandLooksLikeExpectedOwner(`/usr/local/bin/wacli --store ${store} sync --follow --events`, store, "/usr/local/bin/wacli"), true);
+  assert.equal(commandLooksLikeExpectedOwner(`/usr/local/bin/wacli --store ${store} sync --follow --json`, store, "/usr/local/bin/wacli"), true);
   assert.equal(commandLooksLikeExpectedOwner(`/usr/local/bin/wacli --store ${store} sync --once --events`, store), false);
   assert.equal(commandLooksLikeExpectedOwner(`node --store ${store} sync --follow --events`, store), false);
+});
+
+test("owner matching preserves executable and store whitespace exactly", () => {
+  const binary = "/private/Build  Folder/wacli";
+  const store = "/private/Account  Store";
+  const command = `${binary} --store ${store} sync --follow --events`;
+  assert.equal(commandLooksLikeExpectedOwner(command, store, binary), true);
+  assert.equal(commandLooksLikeExpectedOwner(command, store, "/other/wacli"), false);
+  assert.equal(commandLooksLikeExpectedOwner(`node ${command}`, store, binary), false);
+  assert.equal(commandLooksLikeExpectedOwner(command.replace("Account  Store", "Account Store"), store, binary), false);
+  assert.equal(commandLooksLikeExpectedOwner(`${command} --extra`, store, binary), false);
+});
+
+test("ensure waits for IPC readiness despite a connected owner without restarting", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wacli-ready-"));
+  let now = 0;
+  let probes = 0;
+  const status = { ok: true, action: "ensure" as const, storeDir: dir,
+    pidFile: "", logFile: "", ownerRunning: true, ownerCommandMatches: true,
+    lockHeldByOwner: true, connected: true, sendReady: false, logTail: [], message: "" };
+  try {
+    const result = await ensureOwner({command: "ensure", json: true, storeDir: dir,
+      settleMs: 1000, graceMs: 1, timeoutMs: 1, tailLines: 40}, {
+      collectStatus: async () => ({...status, sendReady: ++probes >= 3}),
+      now: () => now, sleep: async (ms) => { now += ms; },
+      startOwner: async () => { assert.fail("must not start another owner"); },
+      stopOwner: async () => { assert.fail("must not restart a connected owner"); },
+    });
+    assert.equal(result.sendReady, true);
+    assert.equal(probes, 3);
+  } finally { await fs.rm(dir, {recursive: true, force: true}); }
+});
+
+test("readiness refuses missing, stale, incompatible, wrong-PID and unreachable sockets", { skip: process.platform === "win32" }, async () => {
+  const dir = await fs.mkdtemp(path.join(process.platform === "darwin" ? "/tmp" : os.tmpdir(), "wp-"));
+  const socketPath = path.join(dir, ".send.sock");
+  let response: unknown = {ok: true, action: "ping", owner_pid: process.pid};
+  let requests = 0;
+  const server = net.createServer((socket) => {
+    socket.on("data", (chunk) => {
+      const req = JSON.parse(chunk.toString());
+      assert.equal(req.kind, "ping");
+      assert.equal(req.version, 1);
+      assert.equal(req.to, undefined);
+      assert.equal(req.message, undefined);
+      requests++;
+      if (response !== undefined) socket.end(`${JSON.stringify(response)}\n`);
+    });
+  });
+  try {
+    assert.equal(await probeSendReady(dir, process.pid, 50), false);
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    await fs.chmod(socketPath, 0o600);
+    assert.equal(await probeSendReady(dir, process.pid, 200), true);
+    assert.equal(await probeSendReady(dir, process.pid + 1, 200), false);
+    response = {ok: false, error: "unsupported send kind ping"};
+    assert.equal(await probeSendReady(dir, process.pid, 200), false);
+    response = undefined;
+    assert.equal(await probeSendReady(dir, process.pid, 20), false);
+    assert.equal(requests, 4, "each check makes only one read-only request");
+    await fs.rename(socketPath, path.join(dir, "stale.sock"));
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    // Preserve the socket inode after its listener exits: existence and owner
+    // permissions alone must never count as operational readiness.
+    await fs.rename(path.join(dir, "stale.sock"), socketPath);
+    assert.equal((await fs.lstat(socketPath)).isSocket(), true);
+    assert.equal(await probeSendReady(dir, process.pid, 50), false);
+  } finally {
+    if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+    await fs.rm(dir, {recursive: true, force: true});
+  }
+});
+
+test("ensure connected but unavailable IPC expires within its settle budget", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wacli-ready-timeout-"));
+  let now = 0;
+  try {
+    const result = await ensureOwner({command: "ensure", json: true, storeDir: dir,
+      settleMs: 600, graceMs: 1, timeoutMs: 1, tailLines: 40}, {
+      collectStatus: async () => ({ok: true, action: "ensure", storeDir: dir,
+        pidFile: "", logFile: "", ownerRunning: true, ownerCommandMatches: true,
+        lockHeldByOwner: true, connected: true, sendReady: false, logTail: [], message: "IPC unavailable"}),
+      now: () => now, sleep: async (ms) => { now += ms; },
+      startOwner: async () => { assert.fail("must not start another owner"); },
+      stopOwner: async () => { assert.fail("must not signal an unavailable but connected owner"); },
+    });
+    assert.equal(result.sendReady, false);
+    assert.equal(result.connected, true);
+    assert.equal(now, 600);
+  } finally { await fs.rm(dir, {recursive: true, force: true}); }
 });
 
 test("bounded log read retains 40 nonempty lines and detects current-run events", async () => {

@@ -4,6 +4,18 @@ import { randomUUID, createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { defaultStore, envelope, exactText, parseFlags, runWacli, sleep } from "./runtime.ts";
 import type { Runner } from "./runtime.ts";
+import { ensureOwner, parseArgs as parseOwnerArgs } from "./owner/live.ts";
+
+type ReadyOwner = { sendReady?: boolean; message?: string };
+type PrepareOwner = (store: string, timeoutMs: number) => Promise<ReadyOwner>;
+
+// Connection alone can precede the local send server during startup recovery.
+// Use the same owner helper directly, with its existing bounded settle limit.
+const prepareSendOwner: PrepareOwner = (store, timeoutMs) => {
+  const flags = parseOwnerArgs(["ensure", "--store", store]);
+  flags.settleMs = Math.min(flags.settleMs, timeoutMs);
+  return ensureOwner(flags);
+};
 
 // Keep the existing per-store operation lock during migration: old authored
 // refreshes and new sends must not dispatch concurrently against one account.
@@ -86,7 +98,7 @@ export function verifyHistory(store: string, chat: string, id: string, kind: str
   } finally { db.close(); }
 }
 
-export async function safeSend(kind: "text" | "file", argv: string[], runner: Runner = runWacli) {
+export async function safeSend(kind: "text" | "file", argv: string[], runner: Runner = runWacli, prepareOwner: PrepareOwner = prepareSendOwner) {
   if (["1", "true", "yes", "on"].includes((process.env.WACLI_READONLY || "").trim().toLowerCase())) throw new Error("Read-only mode rejects outbound sending");
   const flags = parseFlags(argv);
   const allowed = new Set(["to", "message", "message-file", "file", "caption", "caption-file", "store", "json", "timeout-ms", "lock-wait-ms", "settle-ms", "grace-ms", "reply-to", "reply-to-sender", "read-policy", "handled-through", "allow-self", "no-preview"]);
@@ -114,6 +126,12 @@ export async function safeSend(kind: "text" | "file", argv: string[], runner: Ru
   const release = await operationLock(store, milliseconds(flags["lock-wait-ms"], 180_000));
   const timings: Record<string, number> = { lockWaitMs: performance.now() - start };
   try {
+    // Refreshes share this operation lock. Validate readiness before the single
+    // dispatch; a preflight failure cannot become an uncertain send or retry.
+    const readyStarted = performance.now();
+    const owner = await prepareOwner(store, timeout);
+    timings.ownerReadyMs = performance.now() - readyStarted;
+    if (owner.sendReady !== true) throw new Error(`WhatsApp send owner is not ready; nothing was dispatched. ${owner.message || "Check owner readiness before retrying."}`);
     const args = ["--store", store, "--timeout", `${timeout}ms`, "send", kind, "--to", to, "--json"];
     if (kind === "text") args.push("--message", text); else args.push("--file", String(flags.file), "--caption", text);
     for (const key of ["reply-to", "reply-to-sender"]) if (flags[key]) args.push(`--${key}`, String(flags[key]));

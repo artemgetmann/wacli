@@ -21,7 +21,7 @@ try {
     const result = await transcribe(args);
     console.log(args.includes("--json") ? JSON.stringify(result) : result.text);
   } else {
-    const scripts: Record<string, string> = { live: "owner/live.ts", health: "owner/health.ts", "recent-reply": "read/recent-reply.ts", "monitor-check": "read/monitor-check.ts" };
+    const scripts: Record<string, string> = { live: "owner/live.ts", health: "owner/health.ts", "recent-reply": "read/recent-reply.ts", "monitor-check": "read/monitor-check.ts", "monitor-ack": "read/monitor-ack.ts" };
     if (!scripts[action]) throw new Error(`Unknown agent workflow: ${action || "(missing)"}`);
     // Read helpers retain their stable JSON contracts and exit behavior. They
     // execute only packaged siblings, never source from a framework checkout.

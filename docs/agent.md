@@ -9,6 +9,7 @@ source tree, or configuration. The Go binary embeds its version-matched helpers.
 ```sh
 wacli agent recent-reply --target 15551234567@s.whatsapp.net --json
 wacli agent monitor-check --target 15551234567@s.whatsapp.net --state-file /private/monitor.json --json
+wacli agent monitor-ack --target 15551234567@s.whatsapp.net --chat 15551234567@s.whatsapp.net --id SNAPSHOT_ID --ack-token RETURNED_TOKEN --state-file /private/monitor.json --json
 wacli agent health --json
 wacli agent live status --json
 wacli agent live ensure --json
@@ -22,11 +23,24 @@ and live also accept their existing `--store` helper flag; read helpers retain
 `--db`. Existing monitor baselines passed with `--state-file` remain intact.
 The default monitor state is under the selected wacli store, not a framework.
 
+`monitor-check` and `recent-reply --state-file` read the baseline without changing
+it. A new-message result includes an acknowledgement token bound to its exact
+target, message, database, state file and previous baseline. Only after all
+required processing, durable result storage and notification succeed, use
+`monitor-ack` with that snapshot. A transcription failure, blocked item or failed
+notification stays pending. Concurrent stale tokens cannot overwrite a newer
+acknowledgement; newer messages arriving after the check remain for the next
+poll. Acknowledgement changes only the monitor baseline, not WhatsApp read state.
+
 Read/draft operations do not mark messages read. Draft from supplied context;
 read the exact conversation only when requested or during approved send
 preparation. `recent-reply --refresh` is explicit stale-history recovery, not
 the default. Refresh serializes with sends and returns individual stage timings.
 Current-run connection evidence is distinct from caught-up message history.
+Owner `sendReady` separately verifies a responding local IPC server belonging to
+the matched process. Safe sends wait within the existing owner startup limit
+before dispatching; an unready owner means nothing was sent. IPC binds before
+unrelated app-state recovery, and invalid long socket paths fail setup early.
 
 ## Sends and pending work
 
@@ -64,16 +78,26 @@ It does not silently switch providers or ask the phone to retry a batch of media
 
 The first standalone adapter uses OpenAI with the configured model, defaulting
 to `gpt-4o-mini-transcribe`. Supply `OPENAI_API_KEY` in the process environment,
-or provision an owner-only profile once using stdin:
+or provision a credential once using stdin:
 
 ```sh
 wacli agent configure-transcription --model gpt-4o-mini-transcribe
 ```
 
 The key is read from stdin; never put it in argv or logs. Provisioning creates
-`agent-transcription.json` with mode 0600 under the selected store and refuses
-to overwrite an existing profile. No other project config is read at runtime.
-The profile and all private data stay outside Git.
+`agent-transcription.json` with mode 0600 and refuses to replace an existing
+profile. On macOS, new provisioning defaults to Keychain: the profile contains
+only provider/model and the Keychain service/account reference. Other platforms
+retain explicit owner-only profile storage. No other project's config is read.
+
+Migrate an existing selected-store plaintext profile on macOS with
+`wacli agent configure-transcription --credential-store keychain --migrate-profile`.
+This reads that profile without stdin, preserves its provider/model, provisions
+without blindly replacing an existing Keychain item, verifies exact readback,
+then atomically replaces the profile with the reference. Errors preserve the
+working profile and never expose native-tool credential output. Test actual
+transcription in the agent's login environment before declaring migration
+complete. Keychain, profiles and all private data stay outside Git.
 
 Provider contract: [file transcription](https://developers.openai.com/api/docs/guides/speech-to-text)
 and [transcription API](https://developers.openai.com/api/reference/resources/audio/subresources/transcriptions/methods/create).

@@ -5,11 +5,38 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { safeSend } from "./send.ts";
+import { safeSend as productionSafeSend } from "./send.ts";
 import type { CommandResult } from "./runtime.ts";
+import type { Runner } from "./runtime.ts";
+
+// Network/owner setup is a public boundary separate from receipt verification.
+// Unit fixtures provide a ready owner; dedicated cases exercise refusal/order.
+const safeSend = (kind: "text" | "file", args: string[], runner: Runner) => productionSafeSend(kind, args, runner, async () => ({ sendReady: true }));
 
 const chat = "15551234567@s.whatsapp.net";
 const accepted = (extra = {}): CommandResult => ({ ok: true, exitCode: 0, timedOut: false, stderr: "", stdout: JSON.stringify({ success: true, data: { sent: true, to: chat, id: "TEST-SENT", ...extra } }) });
+
+test("connected but not send-ready refuses before dispatch and releases the operation lock", async () => {
+  const f = await fixture();
+  try {
+    let sends = 0;
+    await assert.rejects(productionSafeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello"], async () => { sends++; return accepted(); }, async () => ({ sendReady: false, message: "IPC startup is pending" })), /nothing was dispatched/);
+    assert.equal(sends, 0);
+    await assert.rejects(fs.stat(path.join(f.dir, ".openclaw-send-safe.lock")), { code: "ENOENT" });
+  } finally { await f.close(); }
+});
+
+test("readiness completes before exactly one uncertain send attempt", async () => {
+  const f = await fixture();
+  try {
+    const events: string[] = [];
+    const result = await productionSafeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello", "--settle-ms", "0"], async () => { events.push("send"); return { ok: false, exitCode: null, timedOut: true, stdout: "", stderr: "unknown outcome" }; }, async () => { events.push("ready"); return { sendReady: true }; });
+    assert.deepEqual(events, ["ready", "send"]);
+    assert.equal(result.retryAttempted, false);
+    assert.equal(result.readState.status, "not_attempted");
+    assert.ok(result.timings.ownerReadyMs >= 0);
+  } finally { await f.close(); }
+});
 async function fixture() {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wacli-send-test-"));
   const db = new DatabaseSync(path.join(dir, "wacli.db"));

@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 )
 
-//go:embed package.json dispatch.ts lib/runtime.ts lib/send.ts lib/transcribe.ts lib/owner/store.ts lib/owner/live.ts lib/owner/health.ts lib/read/recent-reply.ts lib/read/monitor-check.ts lib/read/reconciliation.ts lib/read/monitor.ts
+//go:embed package.json dispatch.ts lib/runtime.ts lib/send.ts lib/transcribe.ts lib/keychain.ts lib/owner/store.ts lib/owner/live.ts lib/owner/health.ts lib/read/recent-reply.ts lib/read/monitor-check.ts lib/read/monitor-ack.ts lib/read/reconciliation.ts lib/read/monitor.ts
 var helpers embed.FS
 
 // materialize repairs a cached helper before execution if it differs from the

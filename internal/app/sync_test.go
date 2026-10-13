@@ -692,6 +692,49 @@ func TestDeleteForMeEventMarksMessageDeletedForCurrentUser(t *testing.T) {
 	}
 }
 
+func TestSyncDelegateStartsBeforeBlockingAppStateRecovery(t *testing.T) {
+	a := newTestApp(t)
+	f := newFakeWA()
+	a.wa = f
+	ready := make(chan struct{})
+	// A missing app-state key can make this fetch wait for the primary device.
+	// The delegate callback must already have made sends available by then.
+	f.appStateFetchEvent = func(string, bool, bool) any {
+		select {
+		case <-ready:
+		default:
+			t.Error("app-state recovery began before the delegate was started")
+		}
+		return nil
+	}
+	_, err := a.Sync(context.Background(), SyncOptions{
+		Mode: SyncModeOnce, IdleExit: time.Millisecond,
+		AfterConnect: func(context.Context) error { close(ready); return nil },
+	})
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+}
+
+func TestSyncDelegateBindFailureStopsBeforeAppStateRecovery(t *testing.T) {
+	a := newTestApp(t)
+	f := newFakeWA()
+	a.wa = f
+	bindErr := errors.New("unix socket path too long")
+	_, err := a.Sync(context.Background(), SyncOptions{
+		Mode:         SyncModeFollow,
+		AfterConnect: func(context.Context) error { return bindErr },
+	})
+	if !errors.Is(err, bindErr) {
+		t.Fatalf("Sync: %v, want bind error", err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.appStateFetches) != 0 {
+		t.Fatalf("app-state fetches = %d before bind failure", len(f.appStateFetches))
+	}
+}
+
 func TestSyncFetchesChatAppStateDeltasAfterConnect(t *testing.T) {
 	a := newTestApp(t)
 	f := newFakeWA()

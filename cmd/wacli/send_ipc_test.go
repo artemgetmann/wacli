@@ -33,6 +33,87 @@ func TestTryDelegateSendFallsBackWhenSocketUnavailable(t *testing.T) {
 	}
 }
 
+func TestSendDelegatePingBypassesBusySendQueueAndExecutor(t *testing.T) {
+	skipPresenceDelegateSocketTestOnUnsupportedOS(t)
+	dir := shortPresenceDelegateStoreDir(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	stop, err := startSendDelegateServerForStore(ctx, dir, sendSpacing{}, func(context.Context, sendDelegateRequest) (sendDelegateResponse, error) {
+		close(entered)
+		<-release
+		return sendDelegateResponse{OK: true, Sent: true}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	flags := &rootFlags{storeDir: dir, timeout: time.Second}
+	done := make(chan error, 1)
+	go func() { _, err := delegateSend(ctx, flags, sendDelegateRequest{Kind: "text"}); done <- err }()
+	<-entered
+	defer close(release)
+	resp, err := delegateSend(ctx, &rootFlags{storeDir: dir, timeout: 100 * time.Millisecond}, sendDelegateRequest{Kind: sendDelegatePingKind})
+	if err != nil {
+		t.Fatalf("busy-queue ping: %v", err)
+	}
+	if !resp.OK || resp.Sent || resp.Action != "ping" || resp.OwnerPID != os.Getpid() {
+		t.Fatalf("ping response = %+v", resp)
+	}
+	// The first executor is still blocked: ping cannot have consumed a send slot.
+	select {
+	case err := <-done:
+		t.Fatalf("send ended before release: %v", err)
+	default:
+	}
+}
+
+func TestSendDelegateLongSocketPathCannotBecomeReady(t *testing.T) {
+	skipPresenceDelegateSocketTestOnUnsupportedOS(t)
+	dir := filepath.Join(shortPresenceDelegateStoreDir(t), strings.Repeat("x", 120))
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stop, err := startSendDelegateServerForStore(context.Background(), dir, sendSpacing{}, func(context.Context, sendDelegateRequest) (sendDelegateResponse, error) {
+		t.Fatal("unbound server invoked send executor")
+		return sendDelegateResponse{}, nil
+	})
+	if stop != nil {
+		stop()
+		t.Fatal("long Unix socket path bound unexpectedly")
+	}
+	if err == nil {
+		t.Fatal("long Unix socket path returned no bind error")
+	}
+}
+
+func TestSendDelegatePingRejectsIncompatibleAndExpiredRequests(t *testing.T) {
+	for _, req := range []sendDelegateRequest{
+		{Version: sendDelegateVersion + 1, Kind: sendDelegatePingKind},
+		{Version: sendDelegateVersion, Kind: sendDelegatePingKind, DeadlineUnixMS: time.Now().Add(-time.Second).UnixMilli()},
+	} {
+		client, server := net.Pipe()
+		go handleSendDelegateConn(context.Background(), server,
+			func(context.Context, sendDelegateRequest) (sendDelegateResponse, error) {
+				t.Error("readiness invoked send executor")
+				return sendDelegateResponse{}, nil
+			}, make(chan struct{}, 1), newSendPacer(sendSpacing{}))
+		_ = client.SetDeadline(time.Now().Add(time.Second))
+		if err := json.NewEncoder(client).Encode(req); err != nil {
+			t.Fatal(err)
+		}
+		var resp sendDelegateResponse
+		if err := json.NewDecoder(client).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		_ = client.Close()
+		if resp.OK || resp.OwnerPID != 0 || resp.Sent {
+			t.Fatalf("invalid ping accepted: %+v", resp)
+		}
+	}
+}
+
 func TestTryDelegateSendDoesNotDelegateNonLockErrors(t *testing.T) {
 	orig := errors.New("open store")
 

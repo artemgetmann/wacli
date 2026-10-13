@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import net from "node:net";
 import { defaultStoreDir, requireWritable } from "./store.ts";
 
 type Command = "status" | "ensure" | "stop";
@@ -55,6 +56,7 @@ export type LiveStatus = {
   lockHeldByOwner: boolean;
   lastLifecycleEvent?: LifecycleEvent;
   connected: boolean;
+  sendReady: boolean;
   logTail: string[];
   logEvidenceIncomplete?: boolean;
   runId?: string;
@@ -252,22 +254,18 @@ async function runShortCommand(
   });
 }
 
-export function commandLooksLikeExpectedOwner(command: string, storeDir: string): boolean {
-  // ps returns argv as one display string. Normalize separator whitespace, then
-  // require both the wacli executable and exact owner arguments so an unrelated
-  // interpreter that merely receives wacli-looking argv is never signal-safe.
-  const normalizedCommand = command.trim().replace(/\s+/gu, " ");
-  const normalizedStoreDir = storeDir.trim().replace(/\s+/gu, " ");
-  const firstSeparator = normalizedCommand.indexOf(" ");
-  const executable =
-    firstSeparator === -1 ? normalizedCommand : normalizedCommand.slice(0, firstSeparator);
-  const args = firstSeparator === -1 ? "" : normalizedCommand.slice(firstSeparator + 1);
-  if (path.basename(executable) !== "wacli") {
-    return false;
-  }
+export function commandLooksLikeExpectedOwner(
+  command: string, storeDir: string, executable = process.env.WACLI_AGENT_BINARY || "wacli",
+): boolean {
+  // ps flattens argv, so splitting on whitespace corrupts valid paths. Match
+  // the full known executable and exact arguments; never trust a basename or
+  // normalize whitespace inside a filesystem path.
+  const displayed = command.trim();
+  if (!displayed.startsWith(`${executable} `)) return false;
+  const args = displayed.slice(executable.length + 1);
   return (
-    args === `--store ${normalizedStoreDir} sync --follow --events` ||
-    args === `--store ${normalizedStoreDir} sync --follow --json` ||
+    args === `--store ${storeDir} sync --follow --events` ||
+    args === `--store ${storeDir} sync --follow --json` ||
     // Older owners omitted --store and therefore always used wacli's default.
     // Never extend that legacy trust to a custom store: doing so could signal a
     // default-store owner recorded in the wrong custom-store PID file.
@@ -280,9 +278,53 @@ export function commandLooksLikeExpectedOwner(command: string, storeDir: string)
   );
 }
 
-async function commandMatchesExpected(pid: number, storeDir: string) {
+async function commandMatchesExpected(pid: number, storeDir: string, recordedExecutable?: string) {
   const result = await runShortCommand("ps", ["-o", "command=", "-p", String(pid)], 1_500);
-  return commandLooksLikeExpectedOwner(result.stdout, storeDir);
+  // Legacy records used bare wacli. The selected embedded binary is the exact
+  // path in that case; new records retain the actual executable used to spawn.
+  const executable = recordedExecutable && path.isAbsolute(recordedExecutable) &&
+    path.basename(recordedExecutable) === "wacli"
+    ? recordedExecutable : process.env.WACLI_AGENT_BINARY || "wacli";
+  return commandLooksLikeExpectedOwner(result.stdout, storeDir, executable);
+}
+
+export async function probeSendReady(storeDir: string, ownerPid: number, timeoutMs: number): Promise<boolean> {
+  const socketPath = path.join(storeDir, ".send.sock");
+  try {
+    // The local server uses the same owner-only socket boundary as sends.
+    // Refuse symlinks, public sockets and sockets belonging to another user.
+    const stat = await fsp.lstat(socketPath);
+    if (!stat.isSocket() || (stat.mode & 0o077) !== 0 ||
+      (process.getuid && stat.uid !== process.getuid())) return false;
+  } catch { return false; }
+  return await new Promise((resolve) => {
+    const socket = net.createConnection(socketPath);
+    let reply = "";
+    let finished = false;
+    const finish = (ready: boolean) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(ready);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    socket.on("error", () => finish(false));
+    socket.on("end", () => finish(false));
+    socket.on("connect", () => socket.write(`${JSON.stringify({
+      version: 1, kind: "ping", timeout_ms: timeoutMs,
+      deadline_unix_ms: Date.now() + timeoutMs,
+    })}\n`));
+    socket.on("data", (chunk) => {
+      reply += chunk.toString("utf8");
+      if (reply.length > 16 * 1024) return finish(false);
+      if (!reply.includes("\n")) return;
+      try {
+        const response = JSON.parse(reply.split("\n", 1)[0]);
+        finish(response.ok === true && response.action === "ping" && response.owner_pid === ownerPid);
+      } catch { finish(false); }
+    });
+  });
 }
 
 export async function readLogTail(
@@ -432,7 +474,7 @@ async function collectStatus(flags: Flags): Promise<LiveStatus> {
     : undefined;
   const ownerRunning = typeof ownerPid === "number" && ownerPid > 0 && processExists(ownerPid);
   const ownerCommandMatches =
-    ownerRunning && ownerPid ? await commandMatchesExpected(ownerPid, flags.storeDir) : false;
+    ownerRunning && ownerPid ? await commandMatchesExpected(ownerPid, flags.storeDir, pidFile?.command?.[0]) : false;
   const lockInfo = await readLockInfo(flags.storeDir);
   const lockPidRunning =
     typeof lockInfo.pid === "number" && lockInfo.pid > 0 ? processExists(lockInfo.pid) : undefined;
@@ -460,10 +502,14 @@ async function collectStatus(flags: Flags): Promise<LiveStatus> {
     logEvidenceIncomplete: log.incomplete,
     lastLifecycleEvent,
   });
+  const sendReady = connected && ownerPid !== undefined &&
+    await probeSendReady(flags.storeDir, ownerPid, flags.timeoutMs);
 
   let message = "No wacli sync owner is running.";
-  if (connected) {
-    message = "Wacli sync owner is running and reported a current-run connection.";
+  if (sendReady) {
+    message = "Wacli sync owner has a current-run connection and a responsive send endpoint.";
+  } else if (connected) {
+    message = "Wacli sync owner is connected, but send endpoint readiness is not confirmed.";
   } else if (ownerRunning && ownerCommandMatches) {
     message = "Wacli sync owner is running, but current-run connection is not confirmed.";
   } else if (ownerRunning) {
@@ -488,6 +534,7 @@ async function collectStatus(flags: Flags): Promise<LiveStatus> {
     lockHeldByOwner,
     lastLifecycleEvent,
     connected,
+    sendReady,
     logTail: log.lines,
     logEvidenceIncomplete: log.incomplete,
     runId: pidFile?.runId,
@@ -503,8 +550,8 @@ async function startOwner(flags: Flags, files: OwnerFiles): Promise<void> {
     // The marker survives ordinary append and rejects same-inode truncation
     // that would otherwise let a later run inherit this run's byte offset.
     await logHandle.write(`${JSON.stringify({ agentOwnerRun: runId })}\n`);
-    const command = ["wacli", "--store", flags.storeDir, "sync", "--follow", "--events"];
-    const child = spawn(process.env.WACLI_AGENT_BINARY || "wacli", command.slice(1), {
+    const command = [process.env.WACLI_AGENT_BINARY || "wacli", "--store", flags.storeDir, "sync", "--follow", "--events"];
+    const child = spawn(command[0], command.slice(1), {
       detached: true,
       stdio: ["ignore", logHandle.fd, logHandle.fd],
       env: process.env,
@@ -553,7 +600,7 @@ export async function ensureOwner(
   const files = resolveOwnerFiles(flags.storeDir);
 
   let initial = await deps.collectStatus(flags);
-  if (initial.connected) {
+  if (initial.sendReady) {
     return initial;
   }
 
@@ -571,6 +618,14 @@ export async function ensureOwner(
 
   if (initial.ownerRunning && initial.ownerCommandMatches) {
     if (!isExplicitlyUnhealthyOwner(initial)) {
+      // Connected can precede socket bind, and old daemons cannot prove ping
+      // readiness. Wait within the existing startup budget, without churning a
+      // connected process or dispatching a message to test it.
+      const deadline = deps.now() + flags.settleMs;
+      while (initial.ownerRunning && initial.ownerCommandMatches && !initial.sendReady && deps.now() < deadline) {
+        await deps.sleep(Math.min(500, Math.max(1, deadline - deps.now())));
+        initial = await deps.collectStatus(flags);
+      }
       return initial;
     }
 
@@ -590,7 +645,7 @@ export async function ensureOwner(
     while (deps.now() < reconnectDeadline) {
       await deps.sleep(Math.min(500, Math.max(1, reconnectDeadline - deps.now())));
       initial = await deps.collectStatus(flags);
-      if (initial.connected) {
+      if (initial.sendReady) {
         initial.message =
           "Wacli sync owner recovered its live connection without a restart.";
         return initial;
@@ -611,8 +666,8 @@ export async function ensureOwner(
   const deadline = deps.now() + flags.settleMs;
   for (;;) {
     const status = await deps.collectStatus(flags);
-    if (status.connected) {
-      status.message = "Wacli started a sync owner and it reported a current-run connection.";
+    if (status.sendReady) {
+      status.message = "Wacli started a connected sync owner with a responsive send endpoint.";
       return status;
     }
     if (!status.ownerRunning && deps.now() > deadline) {
@@ -621,7 +676,7 @@ export async function ensureOwner(
     }
     if (deps.now() > deadline) {
       status.message =
-        "Wacli started a sync owner, but current-run connection did not settle in time.";
+        "Wacli started a sync owner, but connection and send readiness did not settle in time.";
       return status;
     }
     await deps.sleep(500);
@@ -639,7 +694,7 @@ async function stopOwner(flags: Flags): Promise<LiveStatus> {
   let stopReason: LiveStatus["stopReason"] = "no_pid_file";
 
   if (ownerPid && processExists(ownerPid)) {
-    const matchesExpected = await commandMatchesExpected(ownerPid, flags.storeDir);
+    const matchesExpected = await commandMatchesExpected(ownerPid, flags.storeDir, pidFile?.command?.[0]);
     if (!matchesExpected) {
       await fsp.rm(files.pidPath, { force: true });
       const status = await collectStatus(flags);
@@ -660,7 +715,7 @@ async function stopOwner(flags: Flags): Promise<LiveStatus> {
     if (processExists(ownerPid)) {
       // PID reuse after SIGINT must not turn the grace timeout into a signal
       // against an unrelated process.
-      if (!(await commandMatchesExpected(ownerPid, flags.storeDir))) {
+      if (!(await commandMatchesExpected(ownerPid, flags.storeDir, pidFile?.command?.[0]))) {
         const status = await collectStatus(flags);
         status.ok = false;
         status.stopReason = "pid_command_mismatch";
@@ -719,6 +774,7 @@ function emit(result: LiveStatus, asJson: boolean) {
   console.log(`store_dir=${result.storeDir}`);
   console.log(`owner_running=${String(result.ownerRunning)}`);
   console.log(`connected=${String(result.connected)}`);
+  console.log(`send_ready=${String(result.sendReady)}`);
   console.log(`owner_command_matches=${String(result.ownerCommandMatches)}`);
   console.log(`lock_held_by_owner=${String(result.lockHeldByOwner)}`);
   if (result.ownerPid) {
