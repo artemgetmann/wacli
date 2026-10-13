@@ -67,6 +67,19 @@ test("accepted send plus 409 read-state failure never resends", async () => {
   } finally { await f.close(); }
 });
 
+test("captionless attachment verifies NULL history caption with the exact file hash", async () => {
+  const f = await fixture();
+  try {
+    const file = path.join(f.dir, "no-caption.bin");
+    const content = Buffer.from("captionless fixture");
+    await fs.writeFile(file, content);
+    f.db.prepare("INSERT INTO messages VALUES(?,?,1,NULL,'document',NULL,?,NULL)").run(chat, "TEST-SENT", createHash("sha256").update(content).digest());
+    const result = await safeSend("file", ["--store", f.dir, "--to", chat, "--file", file], async () => accepted());
+    assert.equal(result.verification.status, "verified_local");
+    assert.equal(result.retryAttempted, false);
+  } finally { await f.close(); }
+});
+
 test("store warning and malformed/post-dispatch receipts do not trigger read or resend", async () => {
   const f = await fixture();
   try {

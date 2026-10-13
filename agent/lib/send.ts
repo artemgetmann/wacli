@@ -77,7 +77,9 @@ export function verifyHistory(store: string, chat: string, id: string, kind: str
     const row: any = query.get(canonical, id) || (canonical !== chat ? query.get(chat, id) : undefined);
     if (!row || !row.from_me) return { status: "unverified", reason: "Exact outbound ID is absent from local history" };
     if (kind === "text" && row.text !== text) return { status: "unverified", reason: "Exact outbound ID has different text" };
-    if (kind === "file" && (!row.media_type || row.media_caption !== text || !row.file_sha256 || !Buffer.from(row.file_sha256).equals(fileHash!))) {
+    // An absent optional caption is stored as NULL; it represents the same
+    // empty caption, while whitespace in a nonempty caption stays significant.
+    if (kind === "file" && (!row.media_type || (row.media_caption ?? "") !== text || !row.file_sha256 || !Buffer.from(row.file_sha256).equals(fileHash!))) {
       return { status: "unverified", reason: "Attachment hash/media/caption do not match the accepted file" };
     }
     return { status: "verified_local", chatJid: row.chat_jid, messageId: id, quotedMessageId: row.quoted_msg_id || undefined };
