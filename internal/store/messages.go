@@ -99,14 +99,16 @@ func (d *DB) UpsertMessage(p UpsertMessageParams) error {
 		editedTS = unix(p.Timestamp)
 	}
 	return d.q.UpsertMessage(storeCtx(), storedb.UpsertMessageParams{
-		ChatJid:         p.ChatJID,
-		ChatName:        nullString(p.ChatName),
-		MsgID:           p.MsgID,
-		SenderJid:       nullString(p.SenderJID),
-		SenderName:      nullString(p.SenderName),
-		Ts:              unix(p.Timestamp),
-		FromMe:          boolToInt64(p.FromMe),
-		Text:            nullString(p.Text),
+		ChatJid:    p.ChatJID,
+		ChatName:   nullString(p.ChatName),
+		MsgID:      p.MsgID,
+		SenderJid:  nullString(p.SenderJID),
+		SenderName: nullString(p.SenderName),
+		Ts:         unix(p.Timestamp),
+		FromMe:     boolToInt64(p.FromMe),
+		// Message content must retain its exact whitespace. Trimming it makes
+		// a correctly accepted file/stdin payload fail later verification.
+		Text:            nullStringIfEmpty(p.Text),
 		DisplayText:     nullString(p.DisplayText),
 		QuotedMsgID:     nullString(p.QuotedMsgID),
 		QuotedSenderJid: nullString(p.QuotedSenderJID),
@@ -115,7 +117,7 @@ func (d *DB) UpsertMessage(p UpsertMessageParams) error {
 		ReactionToID:    nullString(p.ReactionToID),
 		ReactionEmoji:   nullString(p.ReactionEmoji),
 		MediaType:       nullString(p.MediaType),
-		MediaCaption:    nullString(p.MediaCaption),
+		MediaCaption:    nullStringIfEmpty(p.MediaCaption),
 		Filename:        nullString(p.Filename),
 		MimeType:        nullString(p.MimeType),
 		DirectPath:      nullString(p.DirectPath),

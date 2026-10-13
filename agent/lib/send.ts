@@ -49,18 +49,38 @@ function milliseconds(value: unknown, fallback: number) {
   return n;
 }
 
+// WhatsApp may send to a LID while persisting under its phone-number identity.
+// Only the paired session's explicit mapping establishes that equivalence;
+// names, message bodies and a global message-ID search cannot prove a target.
+function canonicalChat(store: string, value: string): string {
+  const jid = value.includes("@") ? value : `${value.replace(/[^\d]/g, "")}@s.whatsapp.net`;
+  if (!jid.endsWith("@lid")) return jid;
+  const session = new DatabaseSync(path.join(store, "session.db"), { readOnly: true });
+  try {
+    const mapping: any = session.prepare("SELECT pn FROM whatsmeow_lid_map WHERE lid=?").get(jid.slice(0, -4));
+    return mapping?.pn ? `${mapping.pn}@s.whatsapp.net` : jid;
+  } finally { session.close(); }
+}
+
 // Inspect the exact accepted ID in read-only SQLite. File caption matching is
 // insufficient: require the uploaded plaintext hash and an actual media row.
-export function verifyHistory(store: string, chat: string, id: string, kind: string, text: string, fileHash?: Buffer) {
+export function verifyHistory(store: string, chat: string, id: string, kind: string, text: string, fileHash?: Buffer, requestedChat?: string) {
+  const canonical = canonicalChat(store, chat);
+  if (requestedChat && canonicalChat(store, requestedChat) !== canonical) {
+    return { status: "unverified", reason: "Accepted recipient does not match the requested exact target" };
+  }
   const db = new DatabaseSync(path.join(store, "wacli.db"), { readOnly: true });
   try {
-    const row: any = db.prepare("SELECT * FROM messages WHERE chat_jid=? AND msg_id=?").get(chat, id);
+    // Prefer the canonical row, while accepting an unmigrated LID row only
+    // after the explicit account mapping proved it belongs to this target.
+    const query = db.prepare("SELECT * FROM messages WHERE chat_jid=? AND msg_id=?");
+    const row: any = query.get(canonical, id) || (canonical !== chat ? query.get(chat, id) : undefined);
     if (!row || !row.from_me) return { status: "unverified", reason: "Exact outbound ID is absent from local history" };
     if (kind === "text" && row.text !== text) return { status: "unverified", reason: "Exact outbound ID has different text" };
     if (kind === "file" && (!row.media_type || row.media_caption !== text || !row.file_sha256 || !Buffer.from(row.file_sha256).equals(fileHash!))) {
       return { status: "unverified", reason: "Attachment hash/media/caption do not match the accepted file" };
     }
-    return { status: "verified_local", chatJid: chat, messageId: id, quotedMessageId: row.quoted_msg_id || undefined };
+    return { status: "verified_local", chatJid: row.chat_jid, messageId: id, quotedMessageId: row.quoted_msg_id || undefined };
   } finally { db.close(); }
 }
 
@@ -112,7 +132,7 @@ export async function safeSend(kind: "text" | "file", argv: string[], runner: Ru
     if (accepted && chat && id) {
       const deadline = performance.now() + settle;
       do {
-        try { verification = verifyHistory(store, chat, id, kind, text, fileHash); }
+        try { verification = verifyHistory(store, chat, id, kind, text, fileHash, to); }
         catch (error: any) { verification = { status: "unverified", reason: error.message }; }
         if (verification.status === "verified_local" || data.store_warning || performance.now() >= deadline) break;
         await sleep(100);
@@ -121,8 +141,9 @@ export async function safeSend(kind: "text" | "file", argv: string[], runner: Ru
     timings.verifyMs = performance.now() - verifyStart;
     if (policy === "handled" && accepted && verification.status === "verified_local") {
       const readStart = performance.now();
-      const result = await runner(["--store", store, "--timeout", `${timeout}ms`, "chats", "mark-read", "--chat", chat!, "--through-message-id", String(flags["handled-through"]), "--json"], timeout + 5_000);
-      readState = { status: result.ok && envelope(result.stdout)?.success === true ? "marked" : "failed", policy, chatJid: chat, throughMessageId: flags["handled-through"], exitCode: result.exitCode, timedOut: result.timedOut,
+      const verifiedChat = verification.chatJid;
+      const result = await runner(["--store", store, "--timeout", `${timeout}ms`, "chats", "mark-read", "--chat", verifiedChat, "--through-message-id", String(flags["handled-through"]), "--json"], timeout + 5_000);
+      readState = { status: result.ok && envelope(result.stdout)?.success === true ? "marked" : "failed", policy, chatJid: verifiedChat, throughMessageId: flags["handled-through"], exitCode: result.exitCode, timedOut: result.timedOut,
         reason: result.ok ? undefined : envelope(result.stdout)?.error || result.stderr.trim() || "Read-state update failed" };
       timings.readStateMs = performance.now() - readStart;
     }

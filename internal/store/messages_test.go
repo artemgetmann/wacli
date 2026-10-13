@@ -8,6 +8,29 @@ import (
 	"time"
 )
 
+func TestMessageUpsertPreservesExactTextAndCaption(t *testing.T) {
+	db := openTestDB(t)
+	chat := "123@s.whatsapp.net"
+	now := time.Now()
+	if err := db.UpsertChat(chat, "dm", "Test", now); err != nil {
+		t.Fatal(err)
+	}
+	// File/stdin payloads commonly end in a newline. Unicode and surrounding
+	// spaces must survive the same path used by live sends and sync echoes.
+	text := "  first\nsecond \t\n"
+	caption := "\n caption α \n"
+	if err := db.UpsertMessage(UpsertMessageParams{ChatJID: chat, MsgID: "EXACT", Timestamp: now, FromMe: true, Text: text, MediaCaption: caption}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.GetMessage(chat, "EXACT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Text != text || got.MediaCaption != caption {
+		t.Fatalf("content changed: text=%q caption=%q", got.Text, got.MediaCaption)
+	}
+}
+
 func TestMessageUpsertIdempotentAndContext(t *testing.T) {
 	db := openTestDB(t)
 

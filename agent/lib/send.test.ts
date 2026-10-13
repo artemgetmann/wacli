@@ -85,3 +85,33 @@ test("missing handled boundary is rejected before dispatch", async () => {
   await assert.rejects(safeSend("text", ["--to", chat, "--message", "hello", "--read-policy", "handled"], async () => { calls++; return accepted(); }), /handled-through/);
   assert.equal(calls, 0);
 });
+
+test("mapped LID receipts verify the canonical exact target without another send", async () => {
+  const f = await fixture();
+  const session = new DatabaseSync(path.join(f.dir, "session.db"));
+  try {
+    session.exec("CREATE TABLE whatsmeow_lid_map(lid TEXT PRIMARY KEY,pn TEXT NOT NULL)");
+    session.prepare("INSERT INTO whatsmeow_lid_map VALUES(?,?)").run("20001", "15551234567");
+    f.db.prepare("INSERT INTO messages VALUES(?,?,1,'hello',NULL,NULL,NULL,NULL)").run(chat, "TEST-SENT");
+    let sends = 0;
+    const result = await safeSend("text", ["--store", f.dir, "--to", "+1 (555) 123-4567", "--message", "hello"], async () => { sends++; return accepted({ to: "20001@lid" }); });
+    assert.equal(sends, 1);
+    assert.equal(result.verification.status, "verified_local");
+    assert.equal(result.verification.chatJid, chat);
+    assert.equal(result.readState.status, "not_attempted");
+  } finally { session.close(); await f.close(); }
+});
+
+test("an exact ID under another recipient cannot satisfy send verification", async () => {
+  const f = await fixture();
+  try {
+    const foreign = "15557654321@s.whatsapp.net";
+    f.db.prepare("INSERT INTO messages VALUES(?,?,1,'hello',NULL,NULL,NULL,NULL)").run(foreign, "TEST-SENT");
+    let calls = 0;
+    const result = await safeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello", "--read-policy", "handled", "--handled-through", "OLD", "--settle-ms", "0"], async () => { calls++; return accepted({ to: foreign }); });
+    assert.equal(calls, 1);
+    assert.equal(result.verification.status, "unverified");
+    assert.match(result.verification.reason, /recipient/);
+    assert.equal(result.readState.status, "not_attempted");
+  } finally { await f.close(); }
+});
