@@ -60,9 +60,33 @@ test("accepted send plus 409 read-state failure never resends", async () => {
     });
     assert.equal(calls.filter((args) => args.includes("send")).length, 1);
     assert.ok(calls[1].includes("--through-message-id"));
+    assert.ok(calls[1].includes("--self-only"));
+    assert.ok(!calls[1].includes("--receipts"));
     assert.equal(result.ok, true);
     assert.equal(result.verification.status, "verified_local");
     assert.equal(result.readState.status, "failed");
+    assert.equal(result.retryAttempted, false);
+  } finally { await f.close(); }
+});
+
+test("handled send verifies first and marks only the requested boundary on our own devices", async () => {
+  const f = await fixture();
+  try {
+    f.db.prepare("INSERT INTO messages VALUES(?,?,1,'hello',NULL,NULL,NULL,NULL)").run(chat, "TEST-SENT");
+    const calls: string[][] = [];
+    const result = await safeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello", "--read-policy", "handled", "--handled-through", "OLDER-INBOUND"], async (args) => {
+      calls.push(args);
+      return args.includes("mark-read") ? { ok: true, exitCode: 0, timedOut: false, stderr: "", stdout: JSON.stringify({ success: true, data: { receipt: "read-self", sender_notified: false } }) } : accepted();
+    });
+    assert.equal(calls.length, 2);
+    assert.ok(calls[0].includes("send"));
+    assert.ok(calls[1].includes("mark-read"));
+    assert.ok(calls[1].includes("--self-only"));
+    assert.ok(!calls[1].includes("--receipts"));
+    assert.equal(calls[1][calls[1].indexOf("--chat") + 1], chat);
+    assert.equal(calls[1][calls[1].indexOf("--through-message-id") + 1], "OLDER-INBOUND");
+    assert.equal(result.verification.status, "verified_local");
+    assert.equal(result.readState.status, "marked");
     assert.equal(result.retryAttempted, false);
   } finally { await f.close(); }
 });

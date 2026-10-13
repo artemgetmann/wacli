@@ -82,6 +82,7 @@ type fakeWA struct {
 	markReadCalls               []fakeMarkReadCall
 	markReadBeforeApply         func()
 	readReceiptCalls            []fakeReadReceiptCall
+	readSelfCalls               []fakeReadReceiptCall
 	onReadReceipt               func(int) (types.ReceiptType, error)
 	readReceiptErr              error
 	readReceiptType             types.ReceiptType
@@ -767,14 +768,24 @@ func (f *fakeWA) SendMediaRetryReceipt(ctx context.Context, info *types.MessageI
 }
 
 func (f *fakeWA) MarkRead(ctx context.Context, ids []types.MessageID, timestamp time.Time, chat, sender types.JID, addressing types.AddressingMode) (types.ReceiptType, error) {
+	return f.markReceipt(ids, timestamp, chat, sender, addressing, false)
+}
+
+func (f *fakeWA) markReceipt(ids []types.MessageID, timestamp time.Time, chat, sender types.JID, addressing types.AddressingMode, selfOnly bool) (types.ReceiptType, error) {
 	f.mu.Lock()
 	if f.readReceiptErr != nil {
 		err := f.readReceiptErr
 		f.mu.Unlock()
 		return "", err
 	}
-	f.readReceiptCalls = append(f.readReceiptCalls, fakeReadReceiptCall{ids: append([]types.MessageID(nil), ids...), timestamp: timestamp, chat: chat, sender: sender, addressing: addressing})
-	index := len(f.readReceiptCalls) - 1
+	call := fakeReadReceiptCall{ids: append([]types.MessageID(nil), ids...), timestamp: timestamp, chat: chat, sender: sender, addressing: addressing}
+	index := len(f.readReceiptCalls)
+	if selfOnly {
+		index = len(f.readSelfCalls)
+		f.readSelfCalls = append(f.readSelfCalls, call)
+	} else {
+		f.readReceiptCalls = append(f.readReceiptCalls, call)
+	}
 	hook, kind := f.onReadReceipt, f.readReceiptType
 	f.mu.Unlock()
 	if hook != nil {
@@ -784,6 +795,11 @@ func (f *fakeWA) MarkRead(ctx context.Context, ids []types.MessageID, timestamp 
 		return kind, nil
 	}
 	return wa.ReadReceiptUnknown, nil
+}
+
+func (f *fakeWA) MarkReadSelf(ctx context.Context, ids []types.MessageID, timestamp time.Time, chat, sender types.JID, addressing types.AddressingMode) error {
+	_, err := f.markReceipt(ids, timestamp, chat, sender, addressing, true)
+	return err
 }
 
 func (f *fakeWA) RequestHistorySyncOnDemand(ctx context.Context, lastKnown types.MessageInfo, count int) (types.MessageID, error) {

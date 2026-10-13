@@ -144,7 +144,9 @@ export async function safeSend(kind: "text" | "file", argv: string[], runner: Ru
     if (policy === "handled" && accepted && verification.status === "verified_local") {
       const readStart = performance.now();
       const verifiedChat = verification.chatJid;
-      const result = await runner(["--store", store, "--timeout", `${timeout}ms`, "chats", "mark-read", "--chat", verifiedChat, "--through-message-id", String(flags["handled-through"]), "--json"], timeout + 5_000);
+      // Exact IDs update our own devices without sender-facing read receipts or
+      // the unrelated app-state recovery wait. Older owners reject this mode.
+      const result = await runner(["--store", store, "--timeout", `${timeout}ms`, "chats", "mark-read", "--chat", verifiedChat, "--through-message-id", String(flags["handled-through"]), "--self-only", "--json"], timeout + 5_000);
       readState = { status: result.ok && envelope(result.stdout)?.success === true ? "marked" : "failed", policy, chatJid: verifiedChat, throughMessageId: flags["handled-through"], exitCode: result.exitCode, timedOut: result.timedOut,
         reason: result.ok ? undefined : envelope(result.stdout)?.error || result.stderr.trim() || "Read-state update failed" };
       timings.readStateMs = performance.now() - readStart;

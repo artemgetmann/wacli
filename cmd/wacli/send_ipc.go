@@ -367,6 +367,8 @@ func executeDelegatedSend(parent context.Context, a *app.App, req sendDelegateRe
 		return executeDelegatedMarkRead(ctx, a, req)
 	case markReadThroughKind:
 		return executeDelegatedMarkRead(ctx, a, req)
+	case markReadSelfThroughKind:
+		return executeDelegatedMarkRead(ctx, a, req)
 	case markReadReceiptsKind:
 		// Its own kind, so daemons without receipt support reject it here
 		// instead of marking the chat read and dropping the unread count.
@@ -385,6 +387,7 @@ type delegatedMarkReadApp interface {
 	recipientResolverApp
 	MarkChatRead(context.Context, types.JID, bool) error
 	MarkChatReadThrough(context.Context, types.JID, string) error
+	MarkChatReadSelfThrough(context.Context, types.JID, string) (int, types.ReceiptType, error)
 	MarkChatReadWithReceipts(context.Context, types.JID) (int, types.ReceiptType, error)
 }
 
@@ -396,7 +399,7 @@ func executeDelegatedMarkRead(ctx context.Context, a delegatedMarkReadApp, req s
 	if req.Receipts && !read {
 		return sendDelegateResponse{}, fmt.Errorf("--receipts only applies to mark-read")
 	}
-	if req.Kind == markReadThroughKind {
+	if req.Kind == markReadThroughKind || req.Kind == markReadSelfThroughKind {
 		if !read || req.Receipts || req.ThroughMessageID == "" {
 			return sendDelegateResponse{}, fmt.Errorf("mark_read_through requires a message ID and cannot mark unread or send receipts")
 		}
@@ -410,7 +413,14 @@ func executeDelegatedMarkRead(ctx context.Context, a delegatedMarkReadApp, req s
 	// Receipt mode never enters app-state recovery.
 	var receipts *int
 	var receiptType string
-	if req.Receipts {
+	if req.Kind == markReadSelfThroughKind {
+		n, kind, err := a.MarkChatReadSelfThrough(ctx, toJID, req.ThroughMessageID)
+		if err != nil {
+			return sendDelegateResponse{}, err
+		}
+		receipts = &n
+		receiptType = string(kind)
+	} else if req.Receipts {
 		n, kind, err := a.MarkChatReadWithReceipts(ctx, toJID)
 		if err != nil {
 			return sendDelegateResponse{}, err

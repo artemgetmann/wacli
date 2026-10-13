@@ -17,6 +17,7 @@ type chatStateOptions struct {
 	chat             string
 	pick             int
 	receipts         bool
+	selfOnly         bool
 	throughMessageID string
 }
 
@@ -107,7 +108,13 @@ func newChatsMarkReadCmd(flags *rootFlags, read bool) *cobra.Command {
 			if opts.receipts && throughRequested {
 				return fmt.Errorf("--through-message-id cannot be combined with --receipts")
 			}
+			if opts.selfOnly && (!read || opts.receipts || !throughRequested) {
+				return fmt.Errorf("--self-only requires mark-read with --through-message-id and cannot be combined with --receipts")
+			}
 			delegate := sendDelegateRequest{Kind: markReadDelegateKind(opts.receipts, opts.throughMessageID), Read: &read, Receipts: opts.receipts, ThroughMessageID: opts.throughMessageID}
+			if opts.selfOnly {
+				delegate.Kind = markReadSelfThroughKind
+			}
 			return runChatState(flags, opts, use, delegate, func(ctx context.Context, a chatStateApp, jid types.JID) error {
 				if opts.throughMessageID != "" {
 					return a.MarkChatReadThrough(ctx, jid, opts.throughMessageID)
@@ -118,6 +125,7 @@ func newChatsMarkReadCmd(flags *rootFlags, read bool) *cobra.Command {
 	}
 	addChatStateFlags(cmd, &opts)
 	if read {
+		cmd.Flags().BoolVar(&opts.selfOnly, "self-only", false, "send private read-self receipts through the exact stored message without app-state recovery or notifying senders")
 		cmd.Flags().BoolVar(&opts.receipts, "receipts", false, "send read receipts for up to 100 unread messages without waiting for app-state recovery; follows your read-receipt privacy setting")
 		cmd.Flags().StringVar(&opts.throughMessageID, "through-message-id", "", "mark read only through this exact stored message ID")
 	}
@@ -130,13 +138,15 @@ type chatStateApp interface {
 	MuteChat(context.Context, types.JID, bool, time.Duration) error
 	MarkChatRead(context.Context, types.JID, bool) error
 	MarkChatReadThrough(context.Context, types.JID, string) error
+	MarkChatReadSelfThrough(context.Context, types.JID, string) (int, types.ReceiptType, error)
 	MarkChatReadWithReceipts(context.Context, types.JID) (int, types.ReceiptType, error)
 }
 
 // Receipt dispatch does not prove that a sender received a notification.
 type chatStateReceipts struct {
-	count int
-	kind  string
+	count    int
+	kind     string
+	selfOnly bool
 }
 
 func (r chatStateReceipts) senderNotified() *bool {
@@ -148,10 +158,11 @@ func (r chatStateReceipts) senderNotified() *bool {
 }
 
 const (
-	markReadKind         = "mark_read"
-	markReadReceiptsKind = "mark_read_receipts"
-	markReadThroughKind  = "mark_read_through"
-	chatStateKind        = "chat_state"
+	markReadKind            = "mark_read"
+	markReadReceiptsKind    = "mark_read_receipts"
+	markReadThroughKind     = "mark_read_through"
+	markReadSelfThroughKind = "mark_read_self_through"
+	chatStateKind           = "chat_state"
 )
 
 func chatStateDelegateRequest(action string, muteDuration time.Duration) sendDelegateRequest {
@@ -221,11 +232,17 @@ func runChatState(flags *rootFlags, opts chatStateOptions, action string, delega
 				if delegate.Kind == markReadThroughKind {
 					return explainThroughDelegateError(delegateErr, true)
 				}
+				if delegate.Kind == markReadSelfThroughKind && strings.Contains(delegateErr.Error(), "unsupported send kind") {
+					return fmt.Errorf("the running sync process does not support --self-only and did not mark the chat read; restart `wacli sync` after upgrading: %w", delegateErr)
+				}
 				return explainReceiptsDelegateError(delegateErr, opts.receipts)
 			}
-			receipts, err := delegatedReceipts(resp, opts.receipts)
+			receipts, err := delegatedReceipts(resp, opts.receipts || opts.selfOnly)
 			if err != nil {
 				return err
+			}
+			if receipts != nil {
+				receipts.selfOnly = opts.selfOnly
 			}
 			return writeChatStateResult(flags, action, resp.Chat, receipts)
 		}
@@ -256,7 +273,13 @@ func runChatState(flags *rootFlags, opts chatStateOptions, action string, delega
 	}
 	// Receipt mode owns its local read boundary and bypasses app-state recovery.
 	var receipts *chatStateReceipts
-	if opts.receipts {
+	if opts.selfOnly {
+		n, kind, err := a.MarkChatReadSelfThrough(ctx, jid, opts.throughMessageID)
+		if err != nil {
+			return err
+		}
+		receipts = &chatStateReceipts{count: n, kind: string(kind), selfOnly: true}
+	} else if opts.receipts {
 		n, kind, err := a.MarkChatReadWithReceipts(ctx, jid)
 		if err != nil {
 			return err
@@ -268,8 +291,8 @@ func runChatState(flags *rootFlags, opts chatStateOptions, action string, delega
 	return writeChatStateResult(flags, action, jid.String(), receipts)
 }
 
-// writeChatStateResult prints a state command's result. receipts is set only
-// when --receipts was requested.
+// writeChatStateResult prints a state command's result. Receipt metadata is set
+// for --receipts or the explicit private --self-only path.
 func writeChatStateResult(flags *rootFlags, action, chat string, receipts *chatStateReceipts) error {
 	if flags.asJSON {
 		result := map[string]any{
@@ -293,6 +316,9 @@ func writeChatStateResult(flags *rootFlags, action, chat string, receipts *chatS
 	note := ""
 	if receipts.kind == string(types.ReceiptTypeReadSelf) {
 		note = fmt.Sprintf(", sent as %s: your read-receipt privacy setting keeps them from the sender", receipts.kind)
+		if receipts.selfOnly {
+			note = fmt.Sprintf(", sent as %s: sender not notified", receipts.kind)
+		}
 	} else if receipts.count > 0 {
 		note = ", sender notification unknown; WhatsApp applies your privacy setting"
 	}

@@ -67,6 +67,9 @@ func TestChatsMarkReadRejectsEmptyBoundaryAndReceiptCombinationBeforeStoreOpen(t
 	}{
 		{name: "empty boundary", args: []string{"--through-message-id", ""}, want: "requires an exact nonempty message ID"},
 		{name: "receipts combination", args: []string{"--through-message-id", "handled", "--receipts"}, want: "cannot be combined"},
+		{name: "self without boundary", args: []string{"--self-only"}, want: "requires mark-read"},
+		{name: "self with empty boundary", args: []string{"--self-only", "--through-message-id", ""}, want: "requires an exact nonempty"},
+		{name: "self with receipts", args: []string{"--self-only", "--through-message-id", "handled", "--receipts"}, want: "cannot be combined"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			args := append([]string{"--store", t.TempDir(), "chats", "mark-read", "--chat", "123@s.whatsapp.net"}, tc.args...)
@@ -76,6 +79,30 @@ func TestChatsMarkReadRejectsEmptyBoundaryAndReceiptCombinationBeforeStoreOpen(t
 				t.Fatalf("error=%v, want %q", commandErr, tc.want)
 			}
 		})
+	}
+}
+
+func TestExecuteDelegatedReadSelfThroughUsesPrivateFixedBoundary(t *testing.T) {
+	fake := &orderedMarkReadApp{receipts: 4}
+	resp, err := executeDelegatedMarkRead(context.Background(), fake, sendDelegateRequest{Kind: markReadSelfThroughKind, To: "123@s.whatsapp.net", ThroughMessageID: "handled"})
+	if err != nil || !slices.Equal(fake.steps, []string{"self-through 123@s.whatsapp.net id=handled"}) || resp.Receipts == nil || *resp.Receipts != 4 || resp.ReceiptType != string(types.ReceiptTypeReadSelf) {
+		t.Fatalf("steps=%v response=%+v error=%v", fake.steps, resp, err)
+	}
+	read := false
+	for _, req := range []sendDelegateRequest{
+		{Kind: markReadSelfThroughKind, To: "123@s.whatsapp.net"},
+		{Kind: markReadSelfThroughKind, To: "123@s.whatsapp.net", ThroughMessageID: "handled", Receipts: true},
+		{Kind: markReadSelfThroughKind, To: "123@s.whatsapp.net", ThroughMessageID: "handled", Read: &read},
+	} {
+		if _, err := executeDelegatedMarkRead(context.Background(), fake, req); err == nil {
+			t.Fatalf("accepted invalid private request %+v", req)
+		}
+	}
+	if len(fake.steps) != 1 {
+		t.Fatalf("invalid private request changed state: %v", fake.steps)
+	}
+	if newChatsMarkReadCmd(&rootFlags{}, false).Flags().Lookup("self-only") != nil {
+		t.Fatal("mark-unread must reject --self-only")
 	}
 }
 
@@ -105,6 +132,11 @@ func (f *orderedMarkReadApp) MarkChatRead(_ context.Context, chat types.JID, rea
 func (f *orderedMarkReadApp) MarkChatReadThrough(_ context.Context, chat types.JID, id string) error {
 	f.steps = append(f.steps, fmt.Sprintf("through %s id=%s", chat, id))
 	return nil
+}
+
+func (f *orderedMarkReadApp) MarkChatReadSelfThrough(_ context.Context, chat types.JID, id string) (int, types.ReceiptType, error) {
+	f.steps = append(f.steps, fmt.Sprintf("self-through %s id=%s", chat, id))
+	return f.receipts, types.ReceiptTypeReadSelf, f.receiptErr
 }
 
 func TestExecuteDelegatedMarkReadThroughUsesFixedBoundary(t *testing.T) {

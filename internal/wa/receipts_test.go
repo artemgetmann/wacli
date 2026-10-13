@@ -95,3 +95,19 @@ func TestReceiptPrivacyLookupFailureDoesNotDispatch(t *testing.T) {
 		t.Fatal("receipt sent despite failed privacy lookup")
 	}
 }
+
+func TestReadSelfPinsPrivateTypeWithoutPrivacyLookup(t *testing.T) {
+	for _, setting := range []types.PrivacySetting{types.PrivacySettingAll, types.PrivacySettingNone} {
+		f := &receiptTransportFake{privacy: setting, fetchErr: errors.New("privacy unavailable")}
+		if err := dispatchReadSelfReceipt(context.Background(), f, []types.MessageID{"handled"}, time.Now(), types.NewJID("123", types.DefaultUserServer), types.EmptyJID); err != nil {
+			t.Fatal(err)
+		}
+		if f.fetches != 0 || len(f.requests) != 1 || f.requests[0] != types.ReceiptTypeReadSelf {
+			t.Fatalf("privacy=%s fetches=%d receipt=%v", setting, f.fetches, f.requests)
+		}
+	}
+	var c Client
+	if err := c.MarkReadSelf(context.Background(), []types.MessageID{"handled"}, time.Now(), types.NewJID("123", types.DefaultUserServer), types.EmptyJID, ""); err == nil {
+		t.Fatal("read-self accepted a disconnected client")
+	}
+}

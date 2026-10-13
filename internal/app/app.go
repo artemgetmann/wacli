@@ -83,6 +83,7 @@ type WAClient interface {
 	DownloadRetriedMediaToFile(ctx context.Context, directPath string, fileHash, mediaKey []byte, fileLength uint64, mediaType, targetPath string) (int64, error)
 	SendMediaRetryReceipt(ctx context.Context, info *types.MessageInfo, mediaKey []byte) error
 	MarkRead(ctx context.Context, ids []types.MessageID, timestamp time.Time, chat, sender types.JID, addressing types.AddressingMode) (types.ReceiptType, error)
+	MarkReadSelf(ctx context.Context, ids []types.MessageID, timestamp time.Time, chat, sender types.JID, addressing types.AddressingMode) error
 
 	SendChatPresence(ctx context.Context, jid types.JID, state types.ChatPresence, media types.ChatPresenceMedia) error
 	SendPresence(ctx context.Context, presence types.Presence) error

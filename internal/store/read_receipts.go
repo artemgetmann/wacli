@@ -61,3 +61,41 @@ func (d *DB) ClearChatUnreadMarker(jid string) error {
 	_, err := d.sql.ExecContext(storeCtx(), "UPDATE chats SET unread = unread_count > 0 WHERE jid = ?", jid)
 	return err
 }
+
+// SelfReadReceiptCandidatesThrough resolves the inbound anchor and its entire
+// eligible history in one read-only snapshot. Counts are only local estimates;
+// they must never omit older handled messages or extend this exact row boundary.
+func (d *DB) SelfReadReceiptCandidatesThrough(jid, id string) ([]MessageInfo, error) {
+	tx, err := d.sql.BeginTx(storeCtx(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	const eligible = "chat_jid = ? AND from_me = 0 AND ts > 0 AND revoked = 0 AND deleted_for_me = 0 AND deleted_at IS NULL AND COALESCE(reaction_to_id,'') = '' AND COALESCE(reaction_emoji,'') = '' AND (COALESCE(display_text,'') != '(message)' OR TRIM(COALESCE(text,'')) != '')"
+	var ts, rowID int64
+	if err := tx.QueryRow("SELECT ts, rowid FROM messages WHERE "+eligible+" AND msg_id = ?", jid, id).Scan(&ts, &rowID); err != nil {
+		return nil, fmt.Errorf("handled boundary must be an eligible stored inbound message in this chat: %w", err)
+	}
+	rows, err := tx.Query("SELECT msg_id, COALESCE(sender_jid,''), ts FROM messages WHERE "+eligible+" AND (ts < ? OR (ts = ? AND rowid <= ?)) ORDER BY ts ASC, rowid ASC", jid, ts, ts, rowID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var msgs []MessageInfo
+	for rows.Next() {
+		m := MessageInfo{ChatJID: jid}
+		var messageTS int64
+		if err := rows.Scan(&m.MsgID, &m.SenderJID, &messageTS); err != nil {
+			return nil, err
+		}
+		m.Timestamp = fromUnix(messageTS)
+		msgs = append(msgs, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return msgs, tx.Commit()
+}

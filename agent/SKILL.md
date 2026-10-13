@@ -30,6 +30,8 @@ Reads, summaries, and drafts preserve unread state. Safe-send defaults to
 `--read-policy preserve`. Only if all requests through a known inbound snapshot
 are resolved, add `--read-policy handled --handled-through <message-id>`.
 Partial answers, unavailable voice notes, and new inbound remain pending.
+Handled state uses private `read-self` updates with an exact inbound boundary;
+it does not change account privacy settings or wait for app-state recovery.
 Do not use sender-facing `--receipts` to implement handled state.
 
 Transport acceptance, local verification, visible quote rendering, recipient

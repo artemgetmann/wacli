@@ -42,9 +42,12 @@ requests through a known snapshot have been handled, use:
 wacli agent send-text --to 15551234567@s.whatsapp.net --message-file /private/approved.txt --read-policy handled --handled-through INBOUND_ID --json
 ```
 
-This delegates `chats mark-read --through-message-id`; wrong/missing IDs fail
+This delegates `chats mark-read --self-only --through-message-id`; wrong/missing IDs fail
 instead of selecting whichever message arrived most recently. Newer inbound
-must remain pending. Exact device behavior is a live acceptance check.
+must remain pending. Internal `read-self` receipts update your own linked devices
+without sending blue-tick read receipts to contacts or changing account privacy
+settings. This path does not wait for app-state recovery. Exact device behavior
+is a live acceptance check; a successful dispatch alone is not device proof.
 
 JSON keeps transport acceptance (`send.accepted`), `verification`, `quote`,
 and `readState` separate. `verified_local_metadata` does not prove recipient
