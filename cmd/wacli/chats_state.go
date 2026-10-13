@@ -14,9 +14,10 @@ import (
 )
 
 type chatStateOptions struct {
-	chat     string
-	pick     int
-	receipts bool
+	chat             string
+	pick             int
+	receipts         bool
+	throughMessageID string
 }
 
 func newChatsArchiveCmd(flags *rootFlags, archive bool) *cobra.Command {
@@ -99,8 +100,18 @@ func newChatsMarkReadCmd(flags *rootFlags, read bool) *cobra.Command {
 		Use:   use,
 		Short: short,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			delegate := sendDelegateRequest{Kind: markReadDelegateKind(opts.receipts), Read: &read, Receipts: opts.receipts}
+			throughRequested := cmd.Flags().Changed("through-message-id")
+			if throughRequested && strings.TrimSpace(opts.throughMessageID) == "" {
+				return fmt.Errorf("--through-message-id requires an exact nonempty message ID")
+			}
+			if opts.receipts && throughRequested {
+				return fmt.Errorf("--through-message-id cannot be combined with --receipts")
+			}
+			delegate := sendDelegateRequest{Kind: markReadDelegateKind(opts.receipts, opts.throughMessageID), Read: &read, Receipts: opts.receipts, ThroughMessageID: opts.throughMessageID}
 			return runChatState(flags, opts, use, delegate, func(ctx context.Context, a chatStateApp, jid types.JID) error {
+				if opts.throughMessageID != "" {
+					return a.MarkChatReadThrough(ctx, jid, opts.throughMessageID)
+				}
 				return a.MarkChatRead(ctx, jid, read)
 			})
 		},
@@ -108,6 +119,7 @@ func newChatsMarkReadCmd(flags *rootFlags, read bool) *cobra.Command {
 	addChatStateFlags(cmd, &opts)
 	if read {
 		cmd.Flags().BoolVar(&opts.receipts, "receipts", false, "send read receipts for up to 100 unread messages without waiting for app-state recovery; follows your read-receipt privacy setting")
+		cmd.Flags().StringVar(&opts.throughMessageID, "through-message-id", "", "mark read only through this exact stored message ID")
 	}
 	return cmd
 }
@@ -117,6 +129,7 @@ type chatStateApp interface {
 	PinChat(context.Context, types.JID, bool) error
 	MuteChat(context.Context, types.JID, bool, time.Duration) error
 	MarkChatRead(context.Context, types.JID, bool) error
+	MarkChatReadThrough(context.Context, types.JID, string) error
 	MarkChatReadWithReceipts(context.Context, types.JID) (int, types.ReceiptType, error)
 }
 
@@ -137,6 +150,7 @@ func (r chatStateReceipts) senderNotified() *bool {
 const (
 	markReadKind         = "mark_read"
 	markReadReceiptsKind = "mark_read_receipts"
+	markReadThroughKind  = "mark_read_through"
 	chatStateKind        = "chat_state"
 )
 
@@ -148,12 +162,24 @@ func chatStateDelegateRequest(action string, muteDuration time.Duration) sendDel
 	}
 }
 
-// A separate kind makes old daemons reject receipts instead of ignoring a flag.
-func markReadDelegateKind(receipts bool) string {
+// Separate kinds make old daemons reject optional read behavior before they can
+// perform a legacy full read while ignoring fields they do not recognize.
+func markReadDelegateKind(receipts bool, throughMessageID string) string {
 	if receipts {
 		return markReadReceiptsKind
 	}
+	// An old owner must reject this kind before it can clear newer unread work.
+	if throughMessageID != "" {
+		return markReadThroughKind
+	}
 	return markReadKind
+}
+
+func explainThroughDelegateError(err error, requested bool) error {
+	if err == nil || !requested || !strings.Contains(err.Error(), "unsupported send kind") || !strings.Contains(err.Error(), markReadThroughKind) {
+		return err
+	}
+	return fmt.Errorf("the running sync process does not support --through-message-id and did not mark the chat read; restart `wacli sync` after upgrading, then run this again: %w", err)
 }
 
 // explainReceiptsDelegateError turns that rejection into the action to take.
@@ -191,6 +217,9 @@ func runChatState(flags *rootFlags, opts chatStateOptions, action string, delega
 			if delegateErr != nil {
 				if delegate.Kind == chatStateKind {
 					return explainChatStateDelegateError(delegateErr, action)
+				}
+				if delegate.Kind == markReadThroughKind {
+					return explainThroughDelegateError(delegateErr, true)
 				}
 				return explainReceiptsDelegateError(delegateErr, opts.receipts)
 			}

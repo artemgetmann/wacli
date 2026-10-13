@@ -15,7 +15,7 @@ wacli chats pin --chat CHAT [--pick N]
 wacli chats unpin --chat CHAT [--pick N]
 wacli chats mute --chat CHAT [--duration DURATION] [--pick N]
 wacli chats unmute --chat CHAT [--pick N]
-wacli chats mark-read --chat CHAT [--pick N] [--receipts]
+wacli chats mark-read --chat CHAT [--pick N] [--receipts | --through-message-id ID]
 wacli chats mark-unread --chat CHAT [--pick N]
 wacli chats cleanup [--days N] [--jid JID] [--dry-run] [--confirm]
 ```
@@ -30,12 +30,14 @@ wacli chats cleanup [--days N] [--jid JID] [--dry-run] [--confirm]
 - `list --unread` matches counted and marker-only unread chats; `list --no-unread` excludes both.
 - Replayed read signals reduce the unread count only through the messages they cover; older reads cannot restore already-read messages. Known message IDs distinguish arrivals in the same second, using their local insertion order. Without a known ID boundary, messages at the cutoff second remain unread. Content-free system events, reactions, and revocations do not add to live unread counts.
 - `mark-unread` sets the unread marker without inventing an unread count; `mark-read` clears the marker and count through its captured message boundary; arrivals beyond it remain unread.
+- `mark-read --through-message-id ID` uses that exact message stored in the resolved chat as the read boundary. A missing ID or an ID stored only in another chat fails before the WhatsApp write. The boundary is captured before app-state recovery, so later local arrivals, including messages with the same timestamp second, remain locally unread. Do not combine it with `--receipts`.
+- The app-state patch carries the fixed timestamp and message key. WhatsApp's handling of newer device-side unread state still needs a controlled live check; local preservation alone does not prove the phone badge is preserved. Keep pending work tracked until that check succeeds.
 - Reading a chat on the phone clears it here too while `sync` is connected. WhatsApp reports that read as a `read-self` receipt only while read receipts are turned off; with them on it arrives as an ordinary read receipt sent by this account, and both are honoured.
 - `show` accepts the stored JID. If a phone JID maps to a historical `@lid` row, it can show that row too.
 - State commands use `--chat` and resolve names, phone numbers, groups, and JIDs like send commands. Use `--pick N` for ambiguous matches.
 - After a same-store `sync --follow` process finishes startup and opens its local delegate socket, all state commands are delegated to it while it owns the store lock.
 - `mark-read` and `mark-unread` run in the follow process's serialized delegate queue. `archive`, `unarchive`, `pin`, `unpin`, `mute`, and `unmute` run outside it, so an app-state sync or recovery before the change cannot hold queued sends; the caller's `--timeout` still bounds the operation.
-- Restart an older `sync --follow` process after upgrading before using delegated state commands; older daemons return an unsupported `mark_read` or `chat_state` kind error.
+- Restart an older `sync --follow` process after upgrading before using delegated state commands; older daemons return an unsupported `mark_read`, `mark_read_through`, or `chat_state` kind error. A `mark_read_through` rejection does not apply a legacy full read.
 - State commands print a compact success line by default and a stable JSON object with `--json`.
 - `mute --duration 0` or omitting `--duration` mutes forever. Use `unmute` to clear it.
 - Run `wacli sync` to catch up chat-state changes made on other devices; run `wacli contacts refresh` to improve chat names.
@@ -67,6 +69,7 @@ wacli chats list --pinned
 wacli chats show --jid 1234567890@s.whatsapp.net
 wacli chats mute --chat "+1 555 123 4567" --duration 8h
 wacli chats mark-read --chat family --pick 1
+wacli chats mark-read --chat family --through-message-id HANDLED_MESSAGE_ID --json
 wacli chats mark-read --chat family --pick 1 --receipts --json
 wacli chats cleanup --days 365 --dry-run
 ```

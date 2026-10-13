@@ -122,13 +122,47 @@ func (a *App) MuteChat(ctx context.Context, jid types.JID, mute bool, duration t
 }
 
 func (a *App) MarkChatRead(ctx context.Context, jid types.JID, read bool) error {
+	return a.markChatRead(ctx, jid, read, "")
+}
+
+// MarkChatReadThrough fixes the read position to an exact stored message. Resolve
+// it before app-state recovery: recovery may take minutes and new inbound messages
+// must not silently extend the caller's handled boundary.
+func (a *App) MarkChatReadThrough(ctx context.Context, jid types.JID, messageID string) error {
+	if strings.TrimSpace(messageID) == "" || messageID != strings.TrimSpace(messageID) {
+		return fmt.Errorf("--through-message-id requires an exact nonempty message ID")
+	}
+	return a.markChatRead(ctx, jid, true, messageID)
+}
+
+func (a *App) markChatRead(ctx context.Context, jid types.JID, read bool, throughID string) error {
+	chatJID := canonicalJIDString(a.canonicalStoreJID(ctx, jid))
+	var lastTS time.Time
+	var lastKey *waCommon.MessageKey
+	if throughID != "" {
+		// GetMessage uses both the canonical chat and ID. A guessed, stale, or
+		// other-chat ID fails before recovery or a WhatsApp write can start.
+		m, err := a.db.GetMessage(chatJID, throughID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("message %q is not stored in chat %s", throughID, chatJID)
+		}
+		if err != nil {
+			return fmt.Errorf("load handled message %q in chat %s: %w", throughID, chatJID, err)
+		}
+		if m.Timestamp.IsZero() {
+			return fmt.Errorf("message %q in chat %s has no read boundary", throughID, chatJID)
+		}
+		lastTS = m.Timestamp
+		lastKey = messageKeyFromStore(store.MessageInfo{ChatJID: chatJID, MsgID: m.MsgID, Timestamp: m.Timestamp, FromMe: m.FromMe, SenderJID: m.SenderJID})
+	}
 	release, err := a.beginChatStateWrite(ctx, appstate.WAPatchRegularLow)
 	if err != nil {
 		return err
 	}
 	defer release()
-	chatJID := canonicalJIDString(a.canonicalStoreJID(ctx, jid))
-	lastTS, lastKey := a.latestMessageRange(chatJID)
+	if throughID == "" {
+		lastTS, lastKey = a.latestMessageRange(chatJID)
+	}
 	pending, err := a.beginLocalAppStateWrite(appstate.WAPatchRegularLow)
 	if err != nil {
 		return err

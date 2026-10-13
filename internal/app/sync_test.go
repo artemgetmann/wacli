@@ -1060,6 +1060,100 @@ func TestMarkChatReadUsesLatestMessageRange(t *testing.T) {
 	}
 }
 
+func TestMarkChatReadThroughKeepsNewSameSecondMessagesUnread(t *testing.T) {
+	a := newTestApp(t)
+	f := newFakeWA()
+	a.wa = f
+	chat := types.JID{User: "456", Server: types.DefaultUserServer}
+	when := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
+	if err := a.db.UpsertChat(chat.String(), "dm", "Bob", when); err != nil {
+		t.Fatal(err)
+	}
+	add := func(id string) {
+		t.Helper()
+		if err := a.db.UpsertMessage(store.UpsertMessageParams{ChatJID: chat.String(), MsgID: id, SenderJID: chat.String(), Timestamp: when, Text: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add("handled")
+	if err := a.db.SetChatUnreadCount(chat.String(), 1); err != nil {
+		t.Fatal(err)
+	}
+	// Force a mismatched delta into full app-state recovery. Both an arrival
+	// during that replay and one at the send boundary share the handled second.
+	f.appStateFetchErrs = []error{fmt.Errorf("delta mismatch: %w", appstate.ErrMismatchingLTHash), nil}
+	f.appStateFetchEvent = func(_ string, fullSync, _ bool) any {
+		if fullSync {
+			add("during-recovery")
+			if err := a.db.SetChatUnreadCount(chat.String(), 2); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return nil
+	}
+	f.markReadBeforeApply = func() {
+		add("during-send")
+		if err := a.db.SetChatUnreadCount(chat.String(), 3); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.MarkChatReadThrough(context.Background(), chat, "handled"); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	calls := append([]fakeMarkReadCall(nil), f.markReadCalls...)
+	fetches := append([]fakeAppStateFetch(nil), f.appStateFetches...)
+	f.mu.Unlock()
+	if len(fetches) != 2 || fetches[0].fullSync || !fetches[1].fullSync {
+		t.Fatalf("expected delta then full recovery, got %+v", fetches)
+	}
+	if len(calls) != 1 || !calls[0].lastMsgTS.Equal(when) || calls[0].lastMsgKey == nil || calls[0].lastMsgKey.GetID() != "handled" {
+		t.Fatalf("WhatsApp patch used wrong boundary: %+v", calls)
+	}
+	stored, err := a.db.GetChat(chat.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.Unread || stored.UnreadCount != 2 {
+		t.Fatalf("new same-second messages lost: %+v", stored)
+	}
+}
+
+func TestMarkChatReadThroughRejectsUnstoredOrWrongChatBeforeWrite(t *testing.T) {
+	a := newTestApp(t)
+	f := newFakeWA()
+	a.wa = f
+	chat := types.JID{User: "456", Server: types.DefaultUserServer}
+	other := types.JID{User: "789", Server: types.DefaultUserServer}
+	when := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
+	if err := a.db.UpsertChat(chat.String(), "dm", "Bob", when); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.UpsertChat(other.String(), "dm", "Alice", when); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.UpsertMessage(store.UpsertMessageParams{ChatJID: other.String(), MsgID: "foreign", SenderJID: other.String(), Timestamp: when, Text: "foreign"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.SetChatUnreadCount(chat.String(), 1); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"foreign", "missing", " ", ""} {
+		if err := a.MarkChatReadThrough(context.Background(), chat, id); err == nil {
+			t.Fatalf("accepted %q", id)
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.appStateFetches) != 0 || len(f.markReadCalls) != 0 {
+		t.Fatalf("invalid IDs reached app-state write: fetches=%d sends=%d", len(f.appStateFetches), len(f.markReadCalls))
+	}
+	stored, err := a.db.GetChat(chat.String())
+	if err != nil || !stored.Unread || stored.UnreadCount != 1 {
+		t.Fatalf("invalid IDs changed unread state: %+v, %v", stored, err)
+	}
+}
+
 func TestMuteChatRecoversRegularHighBeforeWrite(t *testing.T) {
 	for _, tc := range []struct {
 		name string

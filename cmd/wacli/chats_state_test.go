@@ -14,13 +14,16 @@ import (
 )
 
 func TestMarkReadDelegateKindSeparatesReceipts(t *testing.T) {
-	if got := markReadDelegateKind(false); got != markReadKind {
+	if got := markReadDelegateKind(false, ""); got != markReadKind {
 		t.Fatalf("plain mark-read kind = %q, want %q", got, markReadKind)
 	}
 	// Its own kind is what makes an old daemon reject the request instead of
 	// clearing the unread count the receipts come from.
-	if got := markReadDelegateKind(true); got != markReadReceiptsKind {
+	if got := markReadDelegateKind(true, ""); got != markReadReceiptsKind {
 		t.Fatalf("--receipts kind = %q, want %q", got, markReadReceiptsKind)
+	}
+	if got := markReadDelegateKind(false, "handled"); got != markReadThroughKind {
+		t.Fatalf("--through-message-id kind = %q, want %q", got, markReadThroughKind)
 	}
 }
 
@@ -48,6 +51,32 @@ func TestChatsMarkReadReceiptsFlagOnlyOnMarkRead(t *testing.T) {
 	if newChatsMarkReadCmd(flags, false).Flags().Lookup("receipts") != nil {
 		t.Fatal("mark-unread must not accept --receipts")
 	}
+	if newChatsMarkReadCmd(flags, true).Flags().Lookup("through-message-id") == nil {
+		t.Fatal("mark-read has no --through-message-id flag")
+	}
+	if newChatsMarkReadCmd(flags, false).Flags().Lookup("through-message-id") != nil {
+		t.Fatal("mark-unread must not accept --through-message-id")
+	}
+}
+
+func TestChatsMarkReadRejectsEmptyBoundaryAndReceiptCombinationBeforeStoreOpen(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "empty boundary", args: []string{"--through-message-id", ""}, want: "requires an exact nonempty message ID"},
+		{name: "receipts combination", args: []string{"--through-message-id", "handled", "--receipts"}, want: "cannot be combined"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"--store", t.TempDir(), "chats", "mark-read", "--chat", "123@s.whatsapp.net"}, tc.args...)
+			var commandErr error
+			captureRootStderr(t, func() { commandErr = execute(args) })
+			if commandErr == nil || !strings.Contains(commandErr.Error(), tc.want) {
+				t.Fatalf("error=%v, want %q", commandErr, tc.want)
+			}
+		})
+	}
 }
 
 type orderedMarkReadApp struct {
@@ -71,6 +100,44 @@ func (f *orderedMarkReadApp) MarkChatReadWithReceipts(_ context.Context, chat ty
 func (f *orderedMarkReadApp) MarkChatRead(_ context.Context, chat types.JID, read bool) error {
 	f.steps = append(f.steps, fmt.Sprintf("mark %s read=%t", chat, read))
 	return nil
+}
+
+func (f *orderedMarkReadApp) MarkChatReadThrough(_ context.Context, chat types.JID, id string) error {
+	f.steps = append(f.steps, fmt.Sprintf("through %s id=%s", chat, id))
+	return nil
+}
+
+func TestExecuteDelegatedMarkReadThroughUsesFixedBoundary(t *testing.T) {
+	fake := &orderedMarkReadApp{}
+	resp, err := executeDelegatedMarkRead(context.Background(), fake, sendDelegateRequest{Kind: markReadThroughKind, To: "123@s.whatsapp.net", ThroughMessageID: "handled"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(fake.steps, []string{"through 123@s.whatsapp.net id=handled"}) || resp.Receipts != nil {
+		t.Fatalf("steps=%q, response=%+v", fake.steps, resp)
+	}
+	for _, req := range []sendDelegateRequest{
+		{Kind: markReadThroughKind, To: "123@s.whatsapp.net"},
+		{Kind: markReadThroughKind, To: "123@s.whatsapp.net", ThroughMessageID: "handled", Receipts: true},
+		{Kind: markReadKind, To: "123@s.whatsapp.net", ThroughMessageID: "handled"},
+	} {
+		if _, err := executeDelegatedMarkRead(context.Background(), fake, req); err == nil {
+			t.Fatalf("accepted malformed request %+v", req)
+		}
+	}
+	if len(fake.steps) != 1 {
+		t.Fatalf("malformed requests wrote state: %v", fake.steps)
+	}
+}
+
+func TestOldOwnerRejectsThroughKindWithoutMutation(t *testing.T) {
+	// Version 1 owners switch on Kind. The dedicated kind cannot be interpreted
+	// as legacy mark_read by an owner that predates this flag.
+	err := fmt.Errorf(`unsupported send kind %q`, markReadThroughKind)
+	got := explainThroughDelegateError(err, true)
+	if got == nil || !strings.Contains(got.Error(), "did not mark the chat read") || !strings.Contains(got.Error(), "restart `wacli sync`") {
+		t.Fatalf("old-owner error=%v", got)
+	}
 }
 
 func TestExecuteDelegatedMarkReadUsesIndependentReceiptPath(t *testing.T) {

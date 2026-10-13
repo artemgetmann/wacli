@@ -425,6 +425,7 @@ type fakeDelegatedMarkReadApp struct {
 	calls        chan delegatedMarkReadCall
 	receipts     int
 	receiptCalls chan types.JID
+	throughIDs   chan string
 }
 
 func (f *fakeDelegatedMarkReadApp) DB() *store.DB { return nil }
@@ -441,6 +442,14 @@ func (f *fakeDelegatedMarkReadApp) MarkChatRead(_ context.Context, chat types.JI
 	return nil
 }
 
+func (f *fakeDelegatedMarkReadApp) MarkChatReadThrough(_ context.Context, chat types.JID, id string) error {
+	if f.throughIDs != nil {
+		f.throughIDs <- id
+	}
+	f.calls <- delegatedMarkReadCall{chat: chat, read: true}
+	return nil
+}
+
 func TestChatsMarkReadDelegatesThroughProductionServerWhenStoreLocked(t *testing.T) {
 	skipPresenceDelegateSocketTestOnUnsupportedOS(t)
 	storeDir := shortPresenceDelegateStoreDir(t)
@@ -454,6 +463,7 @@ func TestChatsMarkReadDelegatesThroughProductionServerWhenStoreLocked(t *testing
 		calls:        make(chan delegatedMarkReadCall, 3),
 		receipts:     2,
 		receiptCalls: make(chan types.JID, 3),
+		throughIDs:   make(chan string, 1),
 	}
 	stop, err := startSendDelegateServerForStore(context.Background(), storeDir, sendSpacing{}, func(ctx context.Context, req sendDelegateRequest) (sendDelegateResponse, error) {
 		if req.Version != sendDelegateVersion {
@@ -461,6 +471,7 @@ func TestChatsMarkReadDelegatesThroughProductionServerWhenStoreLocked(t *testing
 		}
 		switch req.Kind {
 		case markReadKind:
+		case markReadThroughKind:
 		case markReadReceiptsKind:
 			req.Receipts = true // as executeDelegatedSend does for this kind
 		default:
@@ -488,14 +499,16 @@ func TestChatsMarkReadDelegatesThroughProductionServerWhenStoreLocked(t *testing
 	}
 
 	tests := []struct {
-		name     string
-		command  string
-		read     bool
-		receipts bool
+		name      string
+		command   string
+		read      bool
+		receipts  bool
+		throughID string
 	}{
 		{name: "mark-read", command: "mark-read", read: true},
 		{name: "mark-unread", command: "mark-unread", read: false},
 		{name: "mark-read receipts", command: "mark-read", read: true, receipts: true},
+		{name: "mark-read through", command: "mark-read", read: true, throughID: "handled"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -505,6 +518,9 @@ func TestChatsMarkReadDelegatesThroughProductionServerWhenStoreLocked(t *testing
 			}
 			if tt.receipts {
 				args = append(args, "--receipts")
+			}
+			if tt.throughID != "" {
+				args = append(args, "--through-message-id", tt.throughID)
 			}
 			stdout, stderr, err := runPresenceDelegateHelper(t, args)
 			if err != nil {
@@ -518,6 +534,16 @@ func TestChatsMarkReadDelegatesThroughProductionServerWhenStoreLocked(t *testing
 				default:
 				}
 			} else {
+				if tt.throughID != "" {
+					select {
+					case id := <-fake.throughIDs:
+						if id != tt.throughID {
+							t.Fatalf("delegated boundary = %q", id)
+						}
+					default:
+						t.Fatal("handled ID never reached owner")
+					}
+				}
 				select {
 				case call := <-fake.calls:
 					if call.chat.String() != "123@s.whatsapp.net" || call.read != tt.read {
@@ -558,6 +584,36 @@ func TestChatsMarkReadDelegatesThroughProductionServerWhenStoreLocked(t *testing
 	stopped = true
 	if _, err := os.Lstat(socketPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("delegate socket remains after stop: %v", err)
+	}
+}
+
+func TestChatsMarkReadThroughOldOwnerRejectsBeforeStateChange(t *testing.T) {
+	skipPresenceDelegateSocketTestOnUnsupportedOS(t)
+	storeDir := shortPresenceDelegateStoreDir(t)
+	lk, err := lock.Acquire(storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lk.Release()
+	gotKinds := make(chan string, 1)
+	stop, err := startSendDelegateServerForStore(context.Background(), storeDir, sendSpacing{}, func(_ context.Context, req sendDelegateRequest) (sendDelegateResponse, error) {
+		gotKinds <- req.Kind
+		// Model the released owner dispatch switch: unknown kinds fail before
+		// its legacy mark-read handler can ignore the new JSON field.
+		return sendDelegateResponse{}, fmt.Errorf("unsupported send kind %q", req.Kind)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	_, stderr, err := runPresenceDelegateHelper(t, []string{"--store", storeDir, "--timeout", "750ms", "chats", "mark-read", "--chat", "123@s.whatsapp.net", "--through-message-id", "handled"})
+	var gotKind string
+	select {
+	case gotKind = <-gotKinds:
+	default:
+	}
+	if err == nil || gotKind != markReadThroughKind || !strings.Contains(stderr, "did not mark the chat read") {
+		t.Fatalf("kind=%q, error=%v, stderr=%q", gotKind, err, stderr)
 	}
 }
 

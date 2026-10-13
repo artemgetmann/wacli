@@ -67,6 +67,7 @@ type sendDelegateRequest struct {
 	PresenceWaitMS       int64    `json:"presence_wait_ms,omitempty"`
 	Read                 *bool    `json:"read,omitempty"`
 	Receipts             bool     `json:"receipts,omitempty"`
+	ThroughMessageID     string   `json:"through_message_id,omitempty"`
 	Phones               []string `json:"phones,omitempty"`
 	ChatStateAction      string   `json:"chat_state_action,omitempty"`
 	MuteDurationMS       int64    `json:"mute_duration_ms,omitempty"`
@@ -364,6 +365,8 @@ func executeDelegatedSend(parent context.Context, a *app.App, req sendDelegateRe
 		return executeDelegatedEdit(ctx, a, req)
 	case markReadKind:
 		return executeDelegatedMarkRead(ctx, a, req)
+	case markReadThroughKind:
+		return executeDelegatedMarkRead(ctx, a, req)
 	case markReadReceiptsKind:
 		// Its own kind, so daemons without receipt support reject it here
 		// instead of marking the chat read and dropping the unread count.
@@ -381,6 +384,7 @@ func executeDelegatedSend(parent context.Context, a *app.App, req sendDelegateRe
 type delegatedMarkReadApp interface {
 	recipientResolverApp
 	MarkChatRead(context.Context, types.JID, bool) error
+	MarkChatReadThrough(context.Context, types.JID, string) error
 	MarkChatReadWithReceipts(context.Context, types.JID) (int, types.ReceiptType, error)
 }
 
@@ -391,6 +395,13 @@ func executeDelegatedMarkRead(ctx context.Context, a delegatedMarkReadApp, req s
 	}
 	if req.Receipts && !read {
 		return sendDelegateResponse{}, fmt.Errorf("--receipts only applies to mark-read")
+	}
+	if req.Kind == markReadThroughKind {
+		if !read || req.Receipts || req.ThroughMessageID == "" {
+			return sendDelegateResponse{}, fmt.Errorf("mark_read_through requires a message ID and cannot mark unread or send receipts")
+		}
+	} else if req.ThroughMessageID != "" {
+		return sendDelegateResponse{}, fmt.Errorf("through_message_id requires mark_read_through")
 	}
 	toJID, err := resolveRecipient(a, req.To, recipientOptions{pick: req.Pick, asJSON: true})
 	if err != nil {
@@ -406,6 +417,10 @@ func executeDelegatedMarkRead(ctx context.Context, a delegatedMarkReadApp, req s
 		}
 		receipts = &n
 		receiptType = string(kind)
+	} else if req.Kind == markReadThroughKind {
+		if err := a.MarkChatReadThrough(ctx, toJID, req.ThroughMessageID); err != nil {
+			return sendDelegateResponse{}, err
+		}
 	} else if err := a.MarkChatRead(ctx, toJID, read); err != nil {
 		return sendDelegateResponse{}, err
 	}
@@ -546,7 +561,7 @@ func executeDelegatedText(ctx context.Context, a *app.App, req sendDelegateReque
 		return sendDelegateResponse{}, err
 	}
 	now := time.Now().UTC()
-	storeErr := persistOutboundText(ctx, a, toJID, string(msgID), req.Message, now)
+	storeErr := persistOutboundText(ctx, a, toJID, string(msgID), req.Message, now, req.ReplyTo, req.ReplyToSender)
 	waitForPostSendRetryReceipts(ctx, millisDuration(req.PostSendWaitMS, 0))
 	resp := sendDelegateResponse{OK: true, Sent: true, To: toJID.String(), ID: string(msgID)}
 	if storeErr != nil {
