@@ -1,6 +1,7 @@
 package wa
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/openclaw/wacli/internal/out"
 	signalLog "go.mau.fi/libsignal/logger"
+	"go.mau.fi/whatsmeow/appstate"
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
@@ -131,10 +133,56 @@ func (l *whatsmeowLogger) Sub(module string) waLog.Logger {
 
 func (l *whatsmeowLogger) outputf(level, msg string, args ...any) {
 	levelValue, ok := whatsmeowLogLevels[level]
-	if !ok || levelValue < l.min {
+	if !ok {
 		return
+	}
+	// Recovery failures otherwise disappear under the production ERROR filter.
+	// Sanitize these exact pinned SDK templates before formatting at any level:
+	// their arguments can include request IDs, key IDs, or raw snapshot errors.
+	safeRecovery, recoveryDiagnostic := safeAppStateRecoveryDiagnostic(level, msg, args)
+	if levelValue < l.min && !recoveryDiagnostic {
+		return
+	}
+	if recoveryDiagnostic {
+		msg, args = safeRecovery, nil
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	fmt.Fprintf(l.w, "%s [%s %s] %s\n", time.Now().Format("15:04:05.000"), l.module, level, fmt.Sprintf(msg, args...))
+}
+
+// Match both level and literal template from whatsmeow c386243a72ba. Unknown
+// templates keep the ordinary filter; a dependency update must review this list.
+// ParseRecovery and ProcessRecovery share one template, so unknown errors cannot
+// safely distinguish malformed bytes from an unusable snapshot. Only known key
+// sentinels refine that category, without rendering any dynamic argument.
+func safeAppStateRecoveryDiagnostic(level, msg string, args []any) (string, bool) {
+	var reason string
+	if level == "WARN" {
+		switch msg {
+		case "No app state recovery data received for %s":
+			reason = "empty_response"
+		case "Unexpected number of app state recovery results for %s: %d":
+			reason = "unexpected_results"
+		case "Failed to parse app state recovery blob for %s: %v":
+			reason = "snapshot_invalid_or_unusable"
+			if len(args) == 2 {
+				if err, ok := args[1].(error); ok {
+					if errors.Is(err, appstate.ErrKeyNotFound) {
+						reason = "snapshot_key_missing"
+					} else if errors.Is(err, ErrEmptyAppStateKeyShare) {
+						reason = "snapshot_key_unavailable"
+					}
+				}
+			}
+		case "Failed to collect app state events for %s: %v":
+			reason = "collect_events_failed"
+		}
+	} else if level == "INFO" && msg == "Ignoring app state recovery response for %s as current version %d is newer than or equal to recovery version %d" {
+		reason = "stale_version"
+	}
+	if reason == "" {
+		return "", false
+	}
+	return "app state recovery: " + reason + " (details redacted)", true
 }
