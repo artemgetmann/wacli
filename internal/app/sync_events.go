@@ -584,6 +584,15 @@ func (a *App) handleLiveSyncMessage(ctx context.Context, opts SyncOptions, v *ev
 	if pm.ReactionToID != "" && pm.ReactionEmoji == "" && v.Message != nil && v.Message.GetEncReactionMessage() != nil {
 		a.decryptEncryptedReaction(ctx, &pm, v)
 	}
+	// Protocol-only retries can share the decoded message's ID. Keep their
+	// initial diagnostic placeholder, but never replace an already stored
+	// message with it or make a later text retry count as new unread content.
+	if !pm.HasContent() && pm.ID != "" && !pm.Chat.IsEmpty() && pm.Chat != types.StatusBroadcastJID {
+		chat := canonicalJIDString(a.canonicalStoreJID(ctx, pm.Chat))
+		if existing, err := a.db.GetMessage(chat, pm.ID); err == nil && !liveUnreadPlaceholder(existing) {
+			return
+		}
+	}
 	incrementUnread := a.shouldIncrementLiveUnread(ctx, pm)
 	if err := a.storeParsedMessageForSync(ctx, pm, limits...); err == nil {
 		if incrementUnread {
@@ -807,8 +816,22 @@ func (a *App) shouldIncrementLiveUnread(ctx context.Context, pm wa.ParsedMessage
 	if chat == "" {
 		return false
 	}
-	_, err := a.db.GetMessage(chat, pm.ID)
-	return errors.Is(err, sql.ErrNoRows)
+	existing, err := a.db.GetMessage(chat, pm.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true
+	}
+	return err == nil && liveUnreadPlaceholder(existing)
+}
+
+// A contentless protocol row never contributed unread content. Its first real
+// payload may do so, but previously read content, edits and deletion tombstones
+// must remain duplicates even when their stored text is empty.
+func liveUnreadPlaceholder(m store.Message) bool {
+	return m.DisplayText == "(message)" && strings.TrimSpace(m.Text) == "" &&
+		!m.FromMe && !m.Edited && !m.Revoked && !m.DeletedForMe &&
+		m.DeletedAt == nil && m.PayloadPurgedAt == nil &&
+		m.ReactionToID == "" && m.ReactionEmoji == "" &&
+		m.MediaType == "" && len(m.Buttons) == 0
 }
 
 func (a *App) storeHistoryUnreadCount(ctx context.Context, chatID string, conv *waHistorySync.Conversation) {
