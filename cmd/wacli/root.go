@@ -79,6 +79,7 @@ func execute(args []string) error {
 
 	rootCmd.AddCommand(newVersionCmd())
 	rootCmd.AddCommand(newAgentCmd(&flags))
+	rootCmd.AddCommand(newMonitorStateAckCmd(&flags))
 	rootCmd.AddCommand(newAccountsCmd(&flags))
 	rootCmd.AddCommand(newDoctorCmd(&flags))
 	rootCmd.AddCommand(newAuthCmd(&flags))

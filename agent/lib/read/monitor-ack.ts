@@ -1,8 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
-import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
+import { envelope, runWacli } from "../runtime.ts";
+import type { CommandResult, Runner } from "../runtime.ts";
 import { requireWritable } from "../owner/store.ts";
 import { defaultDbPath, defaultStateDir, resolveMonitorStateFile } from "./monitor-check.ts";
 import { decodeMonitorAckSnapshot, readMonitorState, verifyMonitorScope } from "./monitor.ts";
@@ -44,78 +44,15 @@ export function parseArgs(argv: string[]): Args {
   return args;
 }
 
-async function readStateLock(lockPath: string) {
-  const before = await fs.lstat(lockPath);
-  if (!before.isFile()) throw new Error("Unknown monitor lock ownership");
-  const raw = await fs.readFile(lockPath, "utf8");
-  const owner = JSON.parse(raw);
-  const after = await fs.lstat(lockPath);
-  if (before.dev !== after.dev || before.ino !== after.ino ||
-      !Number.isSafeInteger(owner.pid) || owner.pid <= 0 ||
-      typeof owner.nonce !== "string" || !owner.nonce.trim()) {
-    throw new Error("Incomplete or changed monitor lock ownership");
-  }
-  return { raw, pid: owner.pid as number, nonce: owner.nonce as string, dev: after.dev, ino: after.ino };
-}
-
-async function removeUnchangedStateLock(lockPath: string, expected: Awaited<ReturnType<typeof readStateLock>>): Promise<boolean> {
-  const current = await readStateLock(lockPath);
-  // The nonce and contents identify the acquisition; inode/device identify its
-  // actual file. Neither a replaced file nor a rewritten owner may be removed.
-  if (current.raw !== expected.raw || current.nonce !== expected.nonce ||
-      current.dev !== expected.dev || current.ino !== expected.ino) return false;
-  await fs.unlink(lockPath);
-  return true;
-}
-
-async function acquireStateLock(stateFile: string): Promise<() => Promise<void>> {
-  const lockPath = `${stateFile}.ack-lock`;
-  const deadline = Date.now() + 2_000;
-  const nonce = randomUUID();
-  // Recover only fully recorded owners with a definitely dead PID. Live,
-  // inaccessible and incomplete ownership stays locked for the bounded wait.
-  while (true) {
-    // Recovery retries share the same deadline as occupied-lock waits, so
-    // repeated abandoned records cannot turn acknowledgement into an unbounded loop.
-    if (Date.now() >= deadline) throw new Error("Monitor acknowledgement lock is busy; baseline unchanged");
-    try {
-      const lock = await fs.open(lockPath, "wx", 0o600);
-      try {
-        await lock.writeFile(JSON.stringify({ pid: process.pid, nonce }), "utf8");
-        await lock.sync();
-        const owned = await readStateLock(lockPath);
-        return async () => {
-          await lock.close();
-          await removeUnchangedStateLock(lockPath, owned);
-        };
-      } catch (error) {
-        await lock.close();
-        throw error;
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      try {
-        const owner = await readStateLock(lockPath);
-        let definitelyDead = false;
-        try { process.kill(owner.pid, 0); }
-        catch (probe) { definitelyDead = (probe as NodeJS.ErrnoException).code === "ESRCH"; }
-        if (definitelyDead && await removeUnchangedStateLock(lockPath, owner)) continue;
-      } catch { /* Unknown, incomplete or changed ownership is never stolen. */ }
-      if (Date.now() >= deadline) throw new Error("Monitor acknowledgement lock is busy; baseline unchanged");
-      await delay(25);
-    }
-  }
-}
-
-export async function buildMonitorAckCliResult(args: Args): Promise<{
+export async function buildMonitorAckCliResult(args: Args, stateWriter: Runner = runWacli): Promise<{
   status: "acknowledged" | "already_acknowledged";
   target: string;
   chatJid: string;
   msgId: string;
   stateFile: string;
 }> {
-  // Run the guard before directory, lock or temporary-file creation. Checks
-  // remain usable in read-only mode; acknowledgement is an explicit mutation.
+  // Run the guard before dispatching native publication. Checks remain usable
+  // in read-only mode; acknowledgement is an explicit mutation.
   requireWritable("monitor acknowledgement");
   const target = args.target.trim();
   const stateFile = path.resolve(args.stateFile ?? resolveMonitorStateFile(target, args.stateDir ?? defaultStateDir()));
@@ -137,44 +74,30 @@ export async function buildMonitorAckCliResult(args: Args): Promise<{
     throw new Error("Monitor acknowledgement requires the exact resolved actionable inbound message");
   }
 
-  await fs.mkdir(path.dirname(stateFile), { recursive: true, mode: 0o700 });
-  const release = await acquireStateLock(stateFile);
+  const baseline = await readMonitorState(stateFile);
+  verifyMonitorScope(baseline.state, target, args.dbPath);
+  const ackTokenHash = createHash("sha256").update(args.ackToken).digest("hex");
+  // Native publication owns one uninterrupted kernel-lock/CAS/atomic-write
+  // operation. Node must never reclaim or unlink that lock: pathname checks
+  // cannot prevent a competing recoverer from removing a new live owner's file.
+  let command: CommandResult;
   try {
-    const baseline = await readMonitorState(stateFile);
-    verifyMonitorScope(baseline.state, target, args.dbPath);
-    const ackTokenHash = createHash("sha256").update(args.ackToken).digest("hex");
-    const result = { target, chatJid: args.chat, msgId: args.id, stateFile };
-    // A lost command receipt may be retried only for this exact completed
-    // snapshot. An older token must never become an unconditional baseline set.
-    if (baseline.state?.target === target && baseline.state.dbPath === snapshot.dbPath &&
-        baseline.state.chatJid === args.chat && baseline.state.lastProcessedMsgId === args.id &&
-        baseline.state.ackTokenHash === ackTokenHash) {
-      return { status: "already_acknowledged", ...result };
-    }
-    if (baseline.hash !== snapshot.previousStateHash) {
-      throw new Error("Monitor baseline changed since check; refusing stale acknowledgement");
-    }
-
-    const tempFile = `${stateFile}.${randomUUID()}.tmp`;
-    try {
-      // Rename publishes one complete baseline. Creating the replacement with
-      // 0600 also tightens a legacy file's permissions without exposing content.
-      const temp = await fs.open(tempFile, "wx", 0o600);
-      try {
-        await temp.writeFile(`${JSON.stringify({
-          lastProcessedMsgId: args.id, msgId: args.id, ts: message.ts,
-          target, dbPath: snapshot.dbPath, chatJid: args.chat, ackTokenHash,
-        }, null, 2)}\n`, "utf8");
-        await temp.sync();
-      } finally { await temp.close(); }
-      await fs.rename(tempFile, stateFile);
-    } finally {
-      await fs.unlink(tempFile).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== "ENOENT") throw error;
-      });
-    }
-    return { status: "acknowledged", ...result };
-  } finally { await release(); }
+    command = await stateWriter([
+      "agent-monitor-state-ack", "--state-file", stateFile,
+      "--expected-hash", snapshot.previousStateHash, "--ack-token-hash", ackTokenHash,
+      "--target", target, "--db", snapshot.dbPath, "--chat", args.chat,
+      "--id", args.id, "--ts", String(message.ts), "--json",
+    ], 5_000);
+  } catch {
+    throw new Error("Monitor acknowledgement outcome is uncertain; recheck the baseline or retry the exact token");
+  }
+  const receipt = envelope(command.stdout);
+  if (!command.ok || command.timedOut || receipt?.success !== true ||
+      !["acknowledged", "already_acknowledged"].includes(receipt?.data?.status)) {
+    const detail = typeof receipt?.error === "string" ? receipt.error : command.stderr.trim();
+    throw new Error(`Monitor acknowledgement outcome is uncertain; recheck the baseline or retry the exact token${detail ? `: ${detail}` : ""}`);
+  }
+  return { status: receipt.data.status, target, chatJid: args.chat, msgId: args.id, stateFile };
 }
 
 async function main(): Promise<void> {
