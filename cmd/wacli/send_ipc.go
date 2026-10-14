@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/openclaw/wacli/internal/app"
@@ -67,6 +68,7 @@ type sendDelegateRequest struct {
 	PresenceWaitMS       int64    `json:"presence_wait_ms,omitempty"`
 	Read                 *bool    `json:"read,omitempty"`
 	Receipts             bool     `json:"receipts,omitempty"`
+	ThroughMessageID     string   `json:"through_message_id,omitempty"`
 	Phones               []string `json:"phones,omitempty"`
 	ChatStateAction      string   `json:"chat_state_action,omitempty"`
 	MuteDurationMS       int64    `json:"mute_duration_ms,omitempty"`
@@ -364,6 +366,8 @@ func executeDelegatedSend(parent context.Context, a *app.App, req sendDelegateRe
 		return executeDelegatedEdit(ctx, a, req)
 	case markReadKind:
 		return executeDelegatedMarkRead(ctx, a, req)
+	case markReadThroughKind:
+		return executeDelegatedMarkRead(ctx, a, req)
 	case markReadReceiptsKind:
 		// Its own kind, so daemons without receipt support reject it here
 		// instead of marking the chat read and dropping the unread count.
@@ -381,7 +385,9 @@ func executeDelegatedSend(parent context.Context, a *app.App, req sendDelegateRe
 type delegatedMarkReadApp interface {
 	recipientResolverApp
 	MarkChatRead(context.Context, types.JID, bool) error
+	MarkChatReadThrough(context.Context, types.JID, string) error
 	MarkChatReadWithReceipts(context.Context, types.JID) (int, types.ReceiptType, error)
+	MarkChatReadWithReceiptsThrough(context.Context, types.JID, string) (int, types.ReceiptType, error)
 }
 
 func executeDelegatedMarkRead(ctx context.Context, a delegatedMarkReadApp, req sendDelegateRequest) (sendDelegateResponse, error) {
@@ -392,6 +398,13 @@ func executeDelegatedMarkRead(ctx context.Context, a delegatedMarkReadApp, req s
 	if req.Receipts && !read {
 		return sendDelegateResponse{}, fmt.Errorf("--receipts only applies to mark-read")
 	}
+	if req.Kind == markReadThroughKind {
+		if !read || strings.TrimSpace(req.ThroughMessageID) == "" || req.ThroughMessageID != strings.TrimSpace(req.ThroughMessageID) {
+			return sendDelegateResponse{}, fmt.Errorf("bounded mark-read requires an exact nonempty inbound message ID and read=true")
+		}
+	} else if req.ThroughMessageID != "" {
+		return sendDelegateResponse{}, fmt.Errorf("explicit read boundary requires send kind %q", markReadThroughKind)
+	}
 	toJID, err := resolveRecipient(a, req.To, recipientOptions{pick: req.Pick, asJSON: true})
 	if err != nil {
 		return sendDelegateResponse{}, err
@@ -400,14 +413,22 @@ func executeDelegatedMarkRead(ctx context.Context, a delegatedMarkReadApp, req s
 	var receipts *int
 	var receiptType string
 	if req.Receipts {
-		n, kind, err := a.MarkChatReadWithReceipts(ctx, toJID)
+		n, kind, err := markReadReceipts(ctx, a, toJID, req.ThroughMessageID)
 		if err != nil {
 			return sendDelegateResponse{}, err
 		}
 		receipts = &n
 		receiptType = string(kind)
-	} else if err := a.MarkChatRead(ctx, toJID, read); err != nil {
-		return sendDelegateResponse{}, err
+	} else {
+		var err error
+		if req.ThroughMessageID != "" {
+			err = a.MarkChatReadThrough(ctx, toJID, req.ThroughMessageID)
+		} else {
+			err = a.MarkChatRead(ctx, toJID, read)
+		}
+		if err != nil {
+			return sendDelegateResponse{}, err
+		}
 	}
 	action := "mark-read"
 	if !read {
