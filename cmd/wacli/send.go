@@ -183,6 +183,24 @@ func canonicalOutboundChat(ctx context.Context, resolver outboundTextResolver, c
 	return chat
 }
 
+// Immediate history follows sync's canonical sender contract. Resolve only
+// the stored identity; the native context still describes the wire quote.
+func canonicalOutboundQuoteSender(ctx context.Context, resolver outboundTextResolver, raw string) string {
+	if raw == "" {
+		return ""
+	}
+	jid, err := types.ParseJID(raw)
+	if err != nil {
+		return raw
+	}
+	if jid.Server == types.HiddenUserServer {
+		jid = canonicalOutboundChat(ctx, resolver, jid)
+	} else if jid.Server == types.DefaultUserServer {
+		jid = jid.ToNonAD()
+	}
+	return jid.String()
+}
+
 func persistOutboundTextWith(ctx context.Context, db *store.DB, resolver outboundTextResolver, chat types.JID, msgID, text string, now time.Time, contexts ...*waProto.ContextInfo) error {
 	chat = canonicalOutboundChat(ctx, resolver, chat)
 	var quote *waProto.ContextInfo
@@ -204,7 +222,7 @@ func persistOutboundTextWith(ctx context.Context, db *store.DB, resolver outboun
 		FromMe:          true,
 		Text:            text,
 		QuotedMsgID:     quote.GetStanzaID(),
-		QuotedSenderJID: quote.GetParticipant(),
+		QuotedSenderJID: canonicalOutboundQuoteSender(ctx, resolver, quote.GetParticipant()),
 	}); err != nil {
 		storeErr = errors.Join(storeErr, fmt.Errorf("message update: %w", err))
 	}

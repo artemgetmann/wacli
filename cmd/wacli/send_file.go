@@ -211,7 +211,7 @@ func sendFile(ctx context.Context, a interface {
 			FromMe:          true,
 			Text:            opts.caption,
 			QuotedMsgID:     replyContext.GetStanzaID(),
-			QuotedSenderJID: replyContext.GetParticipant(),
+			QuotedSenderJID: canonicalOutboundQuoteSender(ctx, a.WA(), replyContext.GetParticipant()),
 			MediaType:       mediaType,
 			MediaCaption:    opts.caption,
 			Filename:        name,
