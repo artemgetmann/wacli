@@ -81,6 +81,7 @@ type fakeWA struct {
 	muteCalls                   []fakeMuteCall
 	markReadCalls               []fakeMarkReadCall
 	markReadBeforeApply         func()
+	markReadAfterApply          func()
 	readReceiptCalls            []fakeReadReceiptCall
 	readSelfCalls               []fakeReadReceiptCall
 	onReadReceipt               func(int) (types.ReceiptType, error)
@@ -878,11 +879,15 @@ func (f *fakeWA) MarkChatAsRead(ctx context.Context, target types.JID, read bool
 	f.mu.Lock()
 	f.markReadCalls = append(f.markReadCalls, fakeMarkReadCall{target: target, read: read, lastMsgTS: lastMsgTS, lastMsgKey: lastMsgKey})
 	hook := f.markReadBeforeApply
+	afterApply := f.markReadAfterApply
 	f.mu.Unlock()
 	if hook != nil {
 		hook()
 	}
 	beforeApply()
+	if afterApply != nil {
+		afterApply()
+	}
 	return nil, nil
 }
 

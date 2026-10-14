@@ -543,7 +543,7 @@ func (a *App) handleChatStateEvent(ctx context.Context, evt any) error {
 		var err error
 		if v.Action.GetRead() {
 			through, ids := markChatAsReadPosition(v)
-			err = a.db.ClearChatUnreadThrough(canonicalJIDString(chat), through, ids)
+			err = a.clearChatUnreadFromEvent(canonicalJIDString(chat), through, ids)
 		} else {
 			err = a.db.SetChatUnread(canonicalJIDString(chat), true)
 		}
