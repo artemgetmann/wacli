@@ -237,15 +237,16 @@ func TestExplicitReadBoundarySelfOnlyPreservesMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	n, kind, err := a.MarkChatReadSelfThrough(context.Background(), chat, "handled")
-	if err != nil || n != 2 || kind != types.ReceiptTypeReadSelf || len(f.readReceiptCalls) != 0 || len(f.appStateFetches) != 0 {
-		t.Fatalf("self-only path changed: %d %q %v", n, kind, err)
+	if err != nil || n != 0 || kind != "" || len(f.readSelfCalls) != 0 || len(f.readReceiptCalls) != 0 || len(f.appStateFetches) != 0 {
+		t.Fatalf("partial marker-only read must send nothing: %d %q %v", n, kind, err)
 	}
 	c, err := a.db.GetChat(chat.String())
 	if err != nil || !c.Unread || c.UnreadCount != 0 {
 		t.Fatalf("self-only lost newer marker: %+v %v", c, err)
 	}
-	if _, _, err := a.MarkChatReadSelfThrough(context.Background(), chat, "newer"); err != nil {
-		t.Fatal(err)
+	n, kind, err = a.MarkChatReadSelfThrough(context.Background(), chat, "newer")
+	if err != nil || n != 3 || kind != types.ReceiptTypeReadSelf || len(f.readSelfCalls) != 1 {
+		t.Fatalf("latest handled boundary must still dispatch: %d %q %v", n, kind, err)
 	}
 	c, err = a.db.GetChat(chat.String())
 	if err != nil || c.Unread {

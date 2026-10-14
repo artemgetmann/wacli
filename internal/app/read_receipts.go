@@ -129,6 +129,11 @@ func (a *App) MarkChatReadSelfThrough(ctx context.Context, jid types.JID, id str
 	if err != nil {
 		return 0, "", err
 	}
+	if len(msgs) == 0 {
+		// A marker-only chat with newer readable messages must remain pending.
+		// Nothing was sent, so omit the receipt type rather than claim dispatch.
+		return 0, "", nil
+	}
 	isGroup := jid.Server == types.GroupServer
 	batches, err := readReceiptBatches(msgs, isGroup)
 	if err != nil {
