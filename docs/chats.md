@@ -46,6 +46,8 @@ wacli chats cleanup [--days N] [--jid JID] [--dry-run] [--confirm]
 
 ## Read receipts
 
+Read events carrying message IDs are applied as bounded ranges, including live echoes and later recovery replay. If newer readable messages remain, an existing marker-only unread state is preserved even when the event came from another device or a plain mark-read. Events containing only a timestamp keep their existing clearing behavior. Replaying an older range never restores a marker that has already been cleared.
+
 Use `wacli chats mark-read --chat CHAT --receipts` to send receipts for stored unread incoming messages. Plain `mark-read` keeps its existing app-state behavior and does not notify message senders. `mark-unread` remains available through a running sync process.
 
 Add `--through-message-id ID` to send receipts only for the current unread selection at or before that inbound message. The 100-message cap, group sender batching, and read-receipt privacy setting still apply. Repeat with the same ID to finish a capped selection; newer messages remain unread. Both direct execution and delegation honor this cutoff. Older sync processes reject the separate bounded request without falling back to an unbounded read; restart `wacli sync` after upgrading.

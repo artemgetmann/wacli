@@ -460,7 +460,7 @@ func (a *App) handleReceiptEvent(ctx context.Context, evt *events.Receipt) {
 	chatJID := canonicalJIDString(chat)
 	through, ids, err := a.receiptReadPosition(chatJID, evt)
 	if err == nil {
-		err = a.db.ClearChatUnreadThrough(chatJID, through, ids)
+		err = a.clearChatUnreadFromEvent(chatJID, through, ids)
 	}
 	if err != nil {
 		a.emitWarning(
