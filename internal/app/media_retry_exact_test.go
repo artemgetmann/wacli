@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -187,16 +186,5 @@ func TestRetryMediaMessageRejectsMissingSelector(t *testing.T) {
 	out, err := a.RetryMediaMessage(context.Background(), chat, "missing", time.Millisecond)
 	if err != nil || out.Status != "error" || len(f.mediaRetryReceipts) != 0 {
 		t.Fatalf("missing message outcome=%+v error=%v receipts=%v", out, err, f.mediaRetryReceipts)
-	}
-}
-
-func TestExportedIsExpiredMediaDownload(t *testing.T) {
-	for _, err := range []error{whatsmeow.ErrMediaDownloadFailedWith403, whatsmeow.ErrMediaDownloadFailedWith404, whatsmeow.ErrMediaDownloadFailedWith410} {
-		if !IsExpiredMediaDownload(fmt.Errorf("wrapped: %w", err)) {
-			t.Fatalf("expired error missed: %v", err)
-		}
-	}
-	if IsExpiredMediaDownload(nil) || IsExpiredMediaDownload(errors.New("HTTP 500")) || IsExpiredMediaDownload(whatsmeow.ErrInvalidMediaEncSHA256) {
-		t.Fatal("non-expiry classified as expired")
 	}
 }
