@@ -75,6 +75,7 @@ type sendDelegateRequest struct {
 	PostSendWaitMS       int64    `json:"post_send_wait_ms,omitempty"`
 	TimeoutMS            int64    `json:"timeout_ms,omitempty"`
 	DeadlineUnixMS       int64    `json:"deadline_unix_ms,omitempty"`
+	RetryOnPhone         bool     `json:"retry_on_phone,omitempty"`
 }
 
 type sendDelegateResponse struct {
@@ -98,6 +99,7 @@ type sendDelegateResponse struct {
 	Contacts       []contactCheckResult `json:"contacts,omitempty"`
 	Presence       *app.PresenceState   `json:"presence,omitempty"`
 	OwnerPID       int                  `json:"owner_pid,omitempty"`
+	Media          *mediaDownloadResult `json:"media,omitempty"`
 }
 
 type sendDelegateExecutor func(context.Context, sendDelegateRequest) (sendDelegateResponse, error)
@@ -132,6 +134,9 @@ func delegateSend(ctx context.Context, flags *rootFlags, req sendDelegateRequest
 	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
 		var netErr net.Error
 		if errors.As(err, &netErr) && netErr.Timeout() {
+			if req.Kind == mediaDownloadKind {
+				return sendDelegateResponse{}, fmt.Errorf("no recovery reply before the timeout; check the exact verified local file before retrying: %w", err)
+			}
 			// The request reached the daemon, which may have started it just
 			// before the deadline. Say so, because a blind retry can send twice.
 			return sendDelegateResponse{}, fmt.Errorf("no reply from the running sync process before the timeout; the %s may still have gone through, so check before retrying: %w", req.Kind, err)
@@ -185,6 +190,10 @@ func startSendDelegateServerForStore(ctx context.Context, storeDir string, spaci
 	// its caller gives up is refused instead of running late (#446).
 	sendSlot := make(chan struct{}, 1)
 	sendSlot <- struct{}{}
+	// Media waits never consume a send slot. A separate per-owner slot ensures
+	// concurrent exact downloads recheck the cache before requesting the phone.
+	mediaSlot := make(chan struct{}, 1)
+	mediaSlot <- struct{}{}
 	// One pacer shared across connections: it spaces the serialized delegated
 	// sends so a burst of `wacli send` processes delegating to this daemon
 	// leaves the wire paced instead of back-to-back. Disabled = no-op.
@@ -196,7 +205,7 @@ func startSendDelegateServerForStore(ctx context.Context, storeDir string, spaci
 			if err != nil {
 				return
 			}
-			go handleSendDelegateConn(ctx, conn, execute, sendSlot, pacer)
+			go handleSendDelegateConn(ctx, conn, execute, sendSlot, pacer, mediaSlot)
 		}
 	}()
 
@@ -222,7 +231,13 @@ func removeStaleSendDelegateSocket(path string) error {
 	return os.Remove(path)
 }
 
-func handleSendDelegateConn(ctx context.Context, conn net.Conn, execute sendDelegateExecutor, sendSlot chan struct{}, pacer *sendPacer) {
+func handleSendDelegateConn(ctx context.Context, conn net.Conn, execute sendDelegateExecutor, sendSlot chan struct{}, pacer *sendPacer, mediaSlots ...chan struct{}) {
+	// Existing direct handler tests omit media support; the production server
+	// supplies one shared media slot across all of its accepted connections.
+	var mediaSlot chan struct{}
+	if len(mediaSlots) != 0 {
+		mediaSlot = mediaSlots[0]
+	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Minute))
 
@@ -267,6 +282,31 @@ func handleSendDelegateConn(ctx context.Context, conn net.Conn, execute sendDele
 		return
 	}
 
+	if req.Kind == mediaDownloadKind {
+		if mediaSlot == nil || req.Version != sendDelegateVersion {
+			_ = json.NewEncoder(conn).Encode(sendDelegateResponse{OK: false, Error: "unsupported media recovery delegate"})
+			return
+		}
+		select {
+		case <-requestCtx.Done():
+			_ = json.NewEncoder(conn).Encode(sendDelegateResponse{OK: false, Error: "media request expired before recovery dispatch"})
+			return
+		case <-mediaSlot:
+			defer func() { mediaSlot <- struct{}{} }()
+		}
+		if requestCtx.Err() != nil {
+			_ = json.NewEncoder(conn).Encode(sendDelegateResponse{OK: false, Error: "media request expired before recovery dispatch"})
+			return
+		}
+		resp, err := execute(requestCtx, req)
+		// A lost answer is uncertain recovery, never permission to repeat a
+		// phone request without reconciling the exact verified local file.
+		if err != nil {
+			resp = sendDelegateResponse{OK: false, Error: err.Error()}
+		}
+		_ = json.NewEncoder(conn).Encode(resp)
+		return
+	}
 	if req.Kind == chatStateKind {
 		// App-state writes are serialized by the app and can wait minutes on
 		// recovery, so they must not hold the send queue.
@@ -355,6 +395,12 @@ func executeDelegatedSend(parent context.Context, a *app.App, req sendDelegateRe
 	defer cancel()
 
 	switch req.Kind {
+	case mediaDownloadKind:
+		if req.To == "" || req.ID == "" {
+			return sendDelegateResponse{}, fmt.Errorf("exact media chat and message ID are required")
+		}
+		result, err := executeExactMediaDownload(ctx, a, req.To, req.ID, req.RetryOnPhone)
+		return sendDelegateResponse{OK: err == nil, Media: result}, err
 	case "text":
 		return executeDelegatedText(ctx, a, req)
 	case "file", "voice":
