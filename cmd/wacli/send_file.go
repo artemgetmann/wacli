@@ -196,13 +196,19 @@ func sendFile(ctx context.Context, a interface {
 			FileLength:    up.FileLength,
 		})
 	} else {
-		chatName := a.WA().ResolveChatName(ctx, to, "")
-		kind := chatKindFromJID(to)
-		if err := a.DB().UpsertChat(to.String(), kind, chatName, now); err != nil {
+		// Match text-send and receipt history using the authoritative LID
+		// mapping. Keep the actual wire destination and accepted ID unchanged.
+		storedChat := to.ToNonAD()
+		if to.Server == types.HiddenUserServer {
+			storedChat = canonicalOutboundChat(ctx, a.WA(), to)
+		}
+		chatName := a.WA().ResolveChatName(ctx, storedChat, "")
+		kind := chatKindFromJID(storedChat)
+		if err := a.DB().UpsertChat(storedChat.String(), kind, chatName, now); err != nil {
 			storeErr = fmt.Errorf("chat update: %w", err)
 		}
 		if err := a.DB().UpsertMessage(store.UpsertMessageParams{
-			ChatJID:       to.String(),
+			ChatJID:       storedChat.String(),
 			ChatName:      chatName,
 			MsgID:         id,
 			SenderJID:     "",
