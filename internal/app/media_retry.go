@@ -73,7 +73,7 @@ func (a *App) RetryMedia(ctx context.Context, opts RetryMediaOptions) (MediaRetr
 // when its recorded local file is missing or invalid. The caller owns the
 // writable store and connected client; this method does not connect or lock.
 // The complete attempt is bounded by thirty seconds and the caller's deadline.
-func (a *App) RetryMediaMessage(ctx context.Context, chatJID, msgID string, wait time.Duration) (MediaRetryOutcome, error) {
+func (a *App) RetryMediaMessage(ctx context.Context, chatJID, msgID string, wait time.Duration) (outcome MediaRetryOutcome, err error) {
 	chatJID, msgID = strings.TrimSpace(chatJID), strings.TrimSpace(msgID)
 	out := MediaRetryOutcome{ChatJID: chatJID, MsgID: msgID, Status: "error"}
 	if chatJID == "" || msgID == "" {
@@ -89,6 +89,17 @@ func (a *App) RetryMediaMessage(ctx context.Context, chatJID, msgID string, wait
 	// the notification timer. WithTimeout retains an earlier caller deadline.
 	bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	// Exact recovery has a single observable lifecycle. These metadata-only
+	// events distinguish an accepted receipt from cancellation and late writes;
+	// they never expose media keys, download URLs or recording contents.
+	a.emitEvent("media_recovery", map[string]any{"phase": "started", "chat_jid": chatJID, "msg_id": msgID})
+	defer func() {
+		phase := "finished"
+		if bounded.Err() != nil || ctx.Err() != nil {
+			phase = "canceled"
+		}
+		a.emitEvent("media_recovery", map[string]any{"phase": phase, "chat_jid": chatJID, "msg_id": msgID, "status": outcome.Status})
+	}()
 	key := mediaRetryKey{chatJID: chatJID, msgID: msgID}
 	result, err := a.retryMedia(bounded, RetryMediaOptions{ChatJID: chatJID, Wait: wait, BatchSize: 1}, &key)
 	if len(result.Outcomes) == 1 {
@@ -267,11 +278,22 @@ func (a *App) retryMedia(ctx context.Context, opts RetryMediaOptions, exact *med
 
 	sendReceipt := func(key mediaRetryKey) bool {
 		r := prepared[key]
+		// Even if a queued caller disconnects just before dispatch, do not ask
+		// the phone after cancellation. No second exact attempt is scheduled.
+		if err := ctx.Err(); err != nil {
+			mu.Lock()
+			notifs[key] = retryNotif{err: err}
+			mu.Unlock()
+			return false
+		}
 		if err := a.wa.SendMediaRetryReceipt(ctx, r.mi, r.info.MediaKey); err != nil {
 			mu.Lock()
 			notifs[key] = retryNotif{err: err}
 			mu.Unlock()
 			return false
+		}
+		if exact != nil {
+			a.emitEvent("media_recovery", map[string]any{"phase": "receipt_sent", "chat_jid": key.chatJID, "msg_id": key.msgID})
 		}
 		return true
 	}
