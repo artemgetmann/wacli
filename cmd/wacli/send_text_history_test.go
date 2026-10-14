@@ -36,6 +36,14 @@ func (w *historyTextWA) SendProtoMessage(ctx context.Context, to types.JID, msg 
 }
 func (w *historyTextWA) ResolveChatName(context.Context, types.JID, string) string { return "Fixture" }
 func (w *historyTextWA) ResolveLIDToPN(ctx context.Context, jid types.JID) types.JID {
+	// Model self and recipient mappings independently; they are distinct people.
+	if jid == w.sender.linkedLID && w.sender.linkedJID != "" {
+		self, _ := types.ParseJID(w.sender.linkedJID)
+		return self
+	}
+	if jid.Server != types.HiddenUserServer {
+		return jid
+	}
 	return w.sender.ResolveLIDToPN(ctx, jid)
 }
 func (w *historyTextWA) ResolvePNToLID(ctx context.Context, jid types.JID) types.JID {
@@ -59,11 +67,12 @@ func TestSendTextImmediateHistoryMatchesNativeQuote(t *testing.T) {
 		sender                string
 		own, noQuote, missing bool
 		override, wantSender  string
+		wantWireSender        string
 	}{
 		{name: "incoming inferred", to: pn, storedChat: pn, sender: pn.String(), wantSender: pn.String()},
 		{name: "incoming missing sender", to: pn, storedChat: pn, wantSender: pn.String()},
 		{name: "own empty stored sender", to: pn, storedChat: pn, own: true, wantSender: self.String()},
-		{name: "own alias uses linked LID", to: lid, storedChat: pn, own: true, wantSender: selfLID.String()},
+		{name: "own alias uses linked LID", to: lid, storedChat: pn, own: true, wantSender: self.String(), wantWireSender: selfLID.String()},
 		{name: "incoming alias retains sender", to: lid, storedChat: pn, sender: pn.String(), wantSender: pn.String()},
 		{name: "unsynced group normalizes explicit sender", to: group, missing: true, override: "15550000001", wantSender: pn.String()},
 		{name: "no quote", to: pn, noQuote: true},
@@ -100,8 +109,12 @@ func TestSendTextImmediateHistoryMatchesNativeQuote(t *testing.T) {
 				t.Fatal(err)
 			}
 			native := sender.protoMsg.GetExtendedTextMessage().GetContextInfo()
-			if got.QuotedMsgID != native.GetStanzaID() || got.QuotedSenderJID != native.GetParticipant() {
-				t.Fatalf("history quote %q/%q differs from native %q/%q", got.QuotedMsgID, got.QuotedSenderJID, native.GetStanzaID(), native.GetParticipant())
+			wantWire := tc.wantWireSender
+			if wantWire == "" {
+				wantWire = tc.wantSender
+			}
+			if got.QuotedMsgID != native.GetStanzaID() || native.GetParticipant() != wantWire {
+				t.Fatalf("history quote ID %q, native %q/%q want sender %q", got.QuotedMsgID, native.GetStanzaID(), native.GetParticipant(), wantWire)
 			}
 			if got.QuotedSenderJID != tc.wantSender {
 				t.Fatalf("sender=%q want %q", got.QuotedSenderJID, tc.wantSender)

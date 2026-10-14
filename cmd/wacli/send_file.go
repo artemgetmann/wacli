@@ -227,7 +227,7 @@ func sendFile(ctx context.Context, a interface {
 			FileEncSHA256:   up.FileEncSHA256,
 			FileLength:      up.FileLength,
 			QuotedMsgID:     replyContext.GetStanzaID(),
-			QuotedSenderJID: replyContext.GetParticipant(),
+			QuotedSenderJID: canonicalOutboundQuoteSender(ctx, a.WA(), replyContext.GetParticipant()),
 		}); err != nil {
 			storeErr = errors.Join(storeErr, fmt.Errorf("message update: %w", err))
 		}
