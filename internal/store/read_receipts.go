@@ -117,8 +117,9 @@ func (d *DB) ClearChatUnreadMarker(jid string) error {
 }
 
 // SelfReadReceiptCandidatesThrough resolves the inbound anchor and its entire
-// eligible history in one read-only snapshot. Counts are only local estimates;
-// they must never omit older handled messages or extend this exact row boundary.
+// eligible history in one read-only snapshot. A marker-only partial range returns
+// an empty selection: even older read-self receipts can clear a device's coarse
+// manual unread badge. Other selections still cover the full handled history.
 func (d *DB) SelfReadReceiptCandidatesThrough(jid, id string) ([]MessageInfo, error) {
 	tx, err := d.sql.BeginTx(storeCtx(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -129,6 +130,16 @@ func (d *DB) SelfReadReceiptCandidatesThrough(jid, id string) ([]MessageInfo, er
 	var ts, rowID int64
 	if err := tx.QueryRow("SELECT ts, rowid FROM messages WHERE "+eligible+" AND msg_id = ?", jid, id).Scan(&ts, &rowID); err != nil {
 		return nil, fmt.Errorf("handled boundary must be an eligible stored inbound message in this chat: %w", err)
+	}
+	// Read the marker and later eligible rows in this same snapshot. A stale
+	// zero counter can defer older receipts too; keeping work pending is safer
+	// than clearing the marker while the caller still excludes newer messages.
+	var preserveMarker bool
+	if err := tx.QueryRow("SELECT unread != 0 AND unread_count = 0 AND EXISTS (SELECT 1 FROM messages WHERE "+eligible+" AND (ts > ? OR (ts = ? AND rowid > ?))) FROM chats WHERE jid = ?", jid, ts, ts, rowID, jid).Scan(&preserveMarker); err != nil {
+		return nil, err
+	}
+	if preserveMarker {
+		return nil, tx.Commit()
 	}
 	rows, err := tx.Query("SELECT msg_id, COALESCE(sender_jid,''), ts FROM messages WHERE "+eligible+" AND (ts < ? OR (ts = ? AND rowid <= ?)) ORDER BY ts ASC, rowid ASC", jid, ts, ts, rowID)
 	if err != nil {

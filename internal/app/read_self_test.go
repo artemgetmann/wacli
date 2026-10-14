@@ -87,6 +87,33 @@ func TestReadSelfThroughSnapshotsHistoryAndKeepsNewerUnread(t *testing.T) {
 	}
 }
 
+func TestReadSelfThroughStaleZeroMarkerSkipsGroupTransport(t *testing.T) {
+	a := newTestApp(t)
+	f := newFakeWA()
+	a.wa = f
+	chat := types.NewJID("123", types.GroupServer)
+	f.groups[chat] = &types.GroupInfo{JID: chat}
+	var msgs []store.UpsertMessageParams
+	// The zero counter might omit genuinely unread older history. Retaining
+	// the marker deliberately takes priority over acknowledging that prefix.
+	for i := range 102 {
+		msgs = append(msgs, store.UpsertMessageParams{MsgID: fmt.Sprintf("old-%03d", i), SenderJID: "111@s.whatsapp.net"})
+	}
+	msgs = append(msgs, store.UpsertMessageParams{MsgID: "handled", SenderJID: "111@s.whatsapp.net"}, store.UpsertMessageParams{MsgID: "newer", SenderJID: "222@s.whatsapp.net"})
+	seedReceiptChat(t, a, chat, "group", msgs, 0)
+	if err := a.db.SetChatUnread(chat.String(), true); err != nil {
+		t.Fatal(err)
+	}
+	n, kind, err := a.MarkChatReadSelfThrough(t.Context(), chat, "handled")
+	if err != nil || n != 0 || kind != "" || len(f.readSelfCalls) != 0 || f.groupInfoCalls != 0 {
+		t.Fatalf("marker-only prefix used group transport: %d %q %v group lookups=%d", n, kind, err, f.groupInfoCalls)
+	}
+	c, err := a.db.GetChat(chat.String())
+	if err != nil || !c.Unread || c.UnreadCount != 0 {
+		t.Fatalf("stale-zero pending state lost: %+v %v", c, err)
+	}
+}
+
 func TestReadSelfThroughRejectsInvalidBoundaryBeforeDispatch(t *testing.T) {
 	a := newTestApp(t)
 	f := newFakeWA()
