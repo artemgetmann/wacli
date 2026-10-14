@@ -134,16 +134,11 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 			}
 
 			preview := fetchLinkPreview(ctx, message, noPreview)
-			msgID, err := runSendOperation(ctx, reconnectForSend(a), func(ctx context.Context) (types.MessageID, error) {
-				return sendTextMessage(ctx, a, toJID, message, replyTo, replyToSender, preview, mentionedJIDs, ephemeralOpts, textSendOptions{allowSelf: allowSelf})
-			})
+			msgID, storeErr, err := sendTextWithHistory(ctx, a, reconnectForSend(a), toJID, message, replyTo, replyToSender, preview, mentionedJIDs, ephemeralOpts, textSendOptions{allowSelf: allowSelf})
 			if err != nil {
 				return err
 			}
-
-			now := time.Now().UTC()
 			chat := toJID
-			storeErr := persistOutboundText(ctx, a, chat, string(msgID), message, now)
 			warnSendStoreFailure(os.Stderr, string(msgID), storeErr)
 
 			waitForPostSendRetryReceipts(ctx, postSendWait)
@@ -175,10 +170,6 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 	return cmd
 }
 
-func persistOutboundText(ctx context.Context, a *app.App, chat types.JID, msgID, text string, now time.Time) error {
-	return persistOutboundTextWith(ctx, a.DB(), a.WA(), chat, msgID, text, now)
-}
-
 type outboundTextResolver interface {
 	ResolveChatName(ctx context.Context, chat types.JID, pushName string) string
 	ResolveLIDToPN(ctx context.Context, jid types.JID) types.JID
@@ -192,22 +183,28 @@ func canonicalOutboundChat(ctx context.Context, resolver outboundTextResolver, c
 	return chat
 }
 
-func persistOutboundTextWith(ctx context.Context, db *store.DB, resolver outboundTextResolver, chat types.JID, msgID, text string, now time.Time) error {
+func persistOutboundTextWith(ctx context.Context, db *store.DB, resolver outboundTextResolver, chat types.JID, msgID, text string, now time.Time, contexts ...*waProto.ContextInfo) error {
 	chat = canonicalOutboundChat(ctx, resolver, chat)
+	var quote *waProto.ContextInfo
+	if len(contexts) > 0 {
+		quote = contexts[0]
+	}
 	chatName := resolver.ResolveChatName(ctx, chat, "")
 	var storeErr error
 	if err := db.UpsertChat(chat.String(), chatKindFromJID(chat), chatName, now); err != nil {
 		storeErr = fmt.Errorf("chat update: %w", err)
 	}
 	if err := db.UpsertMessage(store.UpsertMessageParams{
-		ChatJID:    chat.String(),
-		ChatName:   chatName,
-		MsgID:      msgID,
-		SenderJID:  "",
-		SenderName: "me",
-		Timestamp:  now,
-		FromMe:     true,
-		Text:       text,
+		ChatJID:         chat.String(),
+		ChatName:        chatName,
+		MsgID:           msgID,
+		SenderJID:       "",
+		SenderName:      "me",
+		Timestamp:       now,
+		FromMe:          true,
+		Text:            text,
+		QuotedMsgID:     quote.GetStanzaID(),
+		QuotedSenderJID: quote.GetParticipant(),
 	}); err != nil {
 		storeErr = errors.Join(storeErr, fmt.Errorf("message update: %w", err))
 	}
@@ -237,6 +234,9 @@ type textEphemeralOptions struct {
 
 type textSendOptions struct {
 	allowSelf bool
+	// Capture the context constructed for the accepted native message. History
+	// must not reconstruct its participant from flags or a second store lookup.
+	replyContext **waProto.ContextInfo
 }
 
 type resolvedTextEphemeral struct {
@@ -287,6 +287,9 @@ func sendTextMessageWithSender(ctx context.Context, sender textMessageSender, db
 	}
 	if resolved.hasExpiration {
 		applyEphemeralContext(msg, resolved.expiration)
+	}
+	if options.replyContext != nil {
+		*options.replyContext = msg.GetExtendedTextMessage().GetContextInfo()
 	}
 	return sender.SendProtoMessage(ctx, to, msg)
 }
