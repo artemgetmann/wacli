@@ -102,11 +102,8 @@ func newChatsMarkReadCmd(flags *rootFlags, read bool) *cobra.Command {
 		Short: short,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			throughRequested := cmd.Flags().Changed("through-message-id")
-			if throughRequested && strings.TrimSpace(opts.throughMessageID) == "" {
+			if throughRequested && (strings.TrimSpace(opts.throughMessageID) == "" || opts.throughMessageID != strings.TrimSpace(opts.throughMessageID)) {
 				return fmt.Errorf("--through-message-id requires an exact nonempty message ID")
-			}
-			if opts.receipts && throughRequested {
-				return fmt.Errorf("--through-message-id cannot be combined with --receipts")
 			}
 			if opts.selfOnly && (!read || opts.receipts || !throughRequested) {
 				return fmt.Errorf("--self-only requires mark-read with --through-message-id and cannot be combined with --receipts")
@@ -127,7 +124,7 @@ func newChatsMarkReadCmd(flags *rootFlags, read bool) *cobra.Command {
 	if read {
 		cmd.Flags().BoolVar(&opts.selfOnly, "self-only", false, "send private read-self receipts through the exact stored message without app-state recovery or notifying senders")
 		cmd.Flags().BoolVar(&opts.receipts, "receipts", false, "send read receipts for up to 100 unread messages without waiting for app-state recovery; follows your read-receipt privacy setting")
-		cmd.Flags().StringVar(&opts.throughMessageID, "through-message-id", "", "mark read only through this exact stored message ID")
+		cmd.Flags().StringVar(&opts.throughMessageID, "through-message-id", "", "mark read only through this exact stored inbound message ID")
 	}
 	return cmd
 }
@@ -140,6 +137,7 @@ type chatStateApp interface {
 	MarkChatReadThrough(context.Context, types.JID, string) error
 	MarkChatReadSelfThrough(context.Context, types.JID, string) (int, types.ReceiptType, error)
 	MarkChatReadWithReceipts(context.Context, types.JID) (int, types.ReceiptType, error)
+	MarkChatReadWithReceiptsThrough(context.Context, types.JID, string) (int, types.ReceiptType, error)
 }
 
 // Receipt dispatch does not prove that a sender received a notification.
@@ -176,12 +174,12 @@ func chatStateDelegateRequest(action string, muteDuration time.Duration) sendDel
 // Separate kinds make old daemons reject optional read behavior before they can
 // perform a legacy full read while ignoring fields they do not recognize.
 func markReadDelegateKind(receipts bool, throughMessageID string) string {
-	if receipts {
-		return markReadReceiptsKind
-	}
 	// An old owner must reject this kind before it can clear newer unread work.
 	if throughMessageID != "" {
 		return markReadThroughKind
+	}
+	if receipts {
+		return markReadReceiptsKind
 	}
 	return markReadKind
 }
@@ -280,7 +278,7 @@ func runChatState(flags *rootFlags, opts chatStateOptions, action string, delega
 		}
 		receipts = &chatStateReceipts{count: n, kind: string(kind), selfOnly: true}
 	} else if opts.receipts {
-		n, kind, err := a.MarkChatReadWithReceipts(ctx, jid)
+		n, kind, err := markReadReceipts(ctx, a, jid, opts.throughMessageID)
 		if err != nil {
 			return err
 		}
@@ -289,6 +287,18 @@ func runChatState(flags *rootFlags, opts chatStateOptions, action string, delega
 		return err
 	}
 	return writeChatStateResult(flags, action, jid.String(), receipts)
+}
+
+// Both direct and delegated ordinary receipts share bounded dispatch. The
+// explicit self-only path remains separate and always uses read-self transport.
+func markReadReceipts(ctx context.Context, a interface {
+	MarkChatReadWithReceipts(context.Context, types.JID) (int, types.ReceiptType, error)
+	MarkChatReadWithReceiptsThrough(context.Context, types.JID, string) (int, types.ReceiptType, error)
+}, jid types.JID, throughID string) (int, types.ReceiptType, error) {
+	if throughID != "" {
+		return a.MarkChatReadWithReceiptsThrough(ctx, jid, throughID)
+	}
+	return a.MarkChatReadWithReceipts(ctx, jid)
 }
 
 // writeChatStateResult prints a state command's result. Receipt metadata is set

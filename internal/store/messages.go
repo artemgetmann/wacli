@@ -263,7 +263,8 @@ func (d *DB) MessageLocalMediaPaths(chatJID, msgID string) ([]string, error) {
 
 func (d *DB) UpdateMessageText(chatJID, msgID, text string) error {
 	n, err := d.q.UpdateMessageText(storeCtx(), storedb.UpdateMessageTextParams{
-		Text:        nullString(text),
+		// Explicit edits need the same raw-content preservation as sync upserts.
+		Text:        nullStringIfEmpty(text),
 		DisplayText: nullString(text),
 		ChatJid:     strings.TrimSpace(chatJID),
 		MsgID:       strings.TrimSpace(msgID),

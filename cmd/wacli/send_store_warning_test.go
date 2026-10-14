@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/types"
+	"google.golang.org/protobuf/proto"
 )
 
 // minimalStickerWebP builds the smallest VP8L container that passes
@@ -95,7 +97,8 @@ func TestPersistOutboundTextPreservesQuoteMetadata(t *testing.T) {
 	_, db, _ := newSendFileFixture(t)
 	defer db.Close()
 	chat := types.NewJID("15550000001", types.DefaultUserServer)
-	if err := persistOutboundTextWith(context.Background(), db, fakeTextResolver{}, chat, "QUOTE-REPLY", "hello", time.Now().UTC(), "ORIGINAL", "15550000002@s.whatsapp.net"); err != nil {
+	quote := &waProto.ContextInfo{StanzaID: proto.String("ORIGINAL"), Participant: proto.String("15550000002@s.whatsapp.net")}
+	if err := persistOutboundTextWith(context.Background(), db, fakeTextResolver{}, chat, "QUOTE-REPLY", "hello", time.Now().UTC(), quote); err != nil {
 		t.Fatal(err)
 	}
 	message, err := db.GetMessage(chat.String(), "QUOTE-REPLY")

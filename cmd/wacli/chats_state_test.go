@@ -27,6 +27,12 @@ func TestMarkReadDelegateKindSeparatesReceipts(t *testing.T) {
 	}
 }
 
+func TestBoundedOrdinaryReceiptsUseThroughKind(t *testing.T) {
+	if got := markReadDelegateKind(true, "handled"); got != markReadThroughKind {
+		t.Fatalf("bounded receipts kind = %q, want %q", got, markReadThroughKind)
+	}
+}
+
 func TestExplainReceiptsDelegateErrorNamesTheRestart(t *testing.T) {
 	rejected := fmt.Errorf(`unsupported send kind %q`, markReadReceiptsKind)
 	err := explainReceiptsDelegateError(rejected, true)
@@ -66,7 +72,7 @@ func TestChatsMarkReadRejectsEmptyBoundaryAndReceiptCombinationBeforeStoreOpen(t
 		want string
 	}{
 		{name: "empty boundary", args: []string{"--through-message-id", ""}, want: "requires an exact nonempty message ID"},
-		{name: "receipts combination", args: []string{"--through-message-id", "handled", "--receipts"}, want: "cannot be combined"},
+		{name: "padded boundary", args: []string{"--through-message-id", " handled"}, want: "requires an exact nonempty message ID"},
 		{name: "self without boundary", args: []string{"--self-only"}, want: "requires mark-read"},
 		{name: "self with empty boundary", args: []string{"--self-only", "--through-message-id", ""}, want: "requires an exact nonempty"},
 		{name: "self with receipts", args: []string{"--self-only", "--through-message-id", "handled", "--receipts"}, want: "cannot be combined"},
@@ -124,6 +130,11 @@ func (f *orderedMarkReadApp) MarkChatReadWithReceipts(_ context.Context, chat ty
 	return f.receipts, kind, f.receiptErr
 }
 
+func (f *orderedMarkReadApp) MarkChatReadWithReceiptsThrough(ctx context.Context, chat types.JID, id string) (int, types.ReceiptType, error) {
+	f.steps = append(f.steps, "receipts-through "+id)
+	return f.MarkChatReadWithReceipts(ctx, chat)
+}
+
 func (f *orderedMarkReadApp) MarkChatRead(_ context.Context, chat types.JID, read bool) error {
 	f.steps = append(f.steps, fmt.Sprintf("mark %s read=%t", chat, read))
 	return nil
@@ -150,7 +161,7 @@ func TestExecuteDelegatedMarkReadThroughUsesFixedBoundary(t *testing.T) {
 	}
 	for _, req := range []sendDelegateRequest{
 		{Kind: markReadThroughKind, To: "123@s.whatsapp.net"},
-		{Kind: markReadThroughKind, To: "123@s.whatsapp.net", ThroughMessageID: "handled", Receipts: true},
+		{Kind: markReadThroughKind, To: "123@s.whatsapp.net", ThroughMessageID: " handled"},
 		{Kind: markReadKind, To: "123@s.whatsapp.net", ThroughMessageID: "handled"},
 	} {
 		if _, err := executeDelegatedMarkRead(context.Background(), fake, req); err == nil {

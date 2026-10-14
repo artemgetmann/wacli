@@ -140,20 +140,14 @@ func (a *App) markChatRead(ctx context.Context, jid types.JID, read bool, throug
 	var lastTS time.Time
 	var lastKey *waCommon.MessageKey
 	if throughID != "" {
-		// GetMessage uses both the canonical chat and ID. A guessed, stale, or
-		// other-chat ID fails before recovery or a WhatsApp write can start.
-		m, err := a.db.GetMessage(chatJID, throughID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("message %q is not stored in chat %s", throughID, chatJID)
-		}
+		// Resolve an eligible inbound anchor before recovery or any write;
+		// outgoing and other-chat IDs cannot advance the handled boundary.
+		m, err := a.db.ReadBoundary(chatJID, throughID)
 		if err != nil {
-			return fmt.Errorf("load handled message %q in chat %s: %w", throughID, chatJID, err)
-		}
-		if m.Timestamp.IsZero() {
-			return fmt.Errorf("message %q in chat %s has no read boundary", throughID, chatJID)
+			return err
 		}
 		lastTS = m.Timestamp
-		lastKey = messageKeyFromStore(store.MessageInfo{ChatJID: chatJID, MsgID: m.MsgID, Timestamp: m.Timestamp, FromMe: m.FromMe, SenderJID: m.SenderJID})
+		lastKey = messageKeyFromStore(m)
 	}
 	release, err := a.beginChatStateWrite(ctx, appstate.WAPatchRegularLow)
 	if err != nil {
@@ -181,6 +175,9 @@ func (a *App) markChatRead(ctx context.Context, jid types.JID, read bool, throug
 		var ids []string
 		if lastKey != nil {
 			ids = []string{lastKey.GetID()}
+		}
+		if throughID != "" {
+			return a.db.ClearChatUnreadThroughPreservingMarker(chatJID, lastTS, ids)
 		}
 		return a.db.ClearChatUnreadThrough(chatJID, lastTS, ids)
 	})
@@ -546,7 +543,7 @@ func (a *App) handleChatStateEvent(ctx context.Context, evt any) error {
 		var err error
 		if v.Action.GetRead() {
 			through, ids := markChatAsReadPosition(v)
-			err = a.db.ClearChatUnreadThrough(canonicalJIDString(chat), through, ids)
+			err = a.clearChatUnreadFromEvent(canonicalJIDString(chat), through, ids)
 		} else {
 			err = a.db.SetChatUnread(canonicalJIDString(chat), true)
 		}

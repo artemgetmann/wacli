@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/openclaw/wacli/internal/app"
@@ -470,6 +471,7 @@ type delegatedMarkReadApp interface {
 	MarkChatReadThrough(context.Context, types.JID, string) error
 	MarkChatReadSelfThrough(context.Context, types.JID, string) (int, types.ReceiptType, error)
 	MarkChatReadWithReceipts(context.Context, types.JID) (int, types.ReceiptType, error)
+	MarkChatReadWithReceiptsThrough(context.Context, types.JID, string) (int, types.ReceiptType, error)
 }
 
 func executeDelegatedMarkRead(ctx context.Context, a delegatedMarkReadApp, req sendDelegateRequest) (sendDelegateResponse, error) {
@@ -481,8 +483,11 @@ func executeDelegatedMarkRead(ctx context.Context, a delegatedMarkReadApp, req s
 		return sendDelegateResponse{}, fmt.Errorf("--receipts only applies to mark-read")
 	}
 	if req.Kind == markReadThroughKind || req.Kind == markReadSelfThroughKind {
-		if !read || req.Receipts || req.ThroughMessageID == "" {
-			return sendDelegateResponse{}, fmt.Errorf("mark_read_through requires a message ID and cannot mark unread or send receipts")
+		if !read || strings.TrimSpace(req.ThroughMessageID) == "" || req.ThroughMessageID != strings.TrimSpace(req.ThroughMessageID) {
+			return sendDelegateResponse{}, fmt.Errorf("bounded mark-read requires an exact nonempty inbound message ID and read=true")
+		}
+		if req.Kind == markReadSelfThroughKind && req.Receipts {
+			return sendDelegateResponse{}, fmt.Errorf("--self-only cannot be combined with --receipts")
 		}
 	} else if req.ThroughMessageID != "" {
 		return sendDelegateResponse{}, fmt.Errorf("through_message_id requires mark_read_through")
@@ -502,7 +507,7 @@ func executeDelegatedMarkRead(ctx context.Context, a delegatedMarkReadApp, req s
 		receipts = &n
 		receiptType = string(kind)
 	} else if req.Receipts {
-		n, kind, err := a.MarkChatReadWithReceipts(ctx, toJID)
+		n, kind, err := markReadReceipts(ctx, a, toJID, req.ThroughMessageID)
 		if err != nil {
 			return sendDelegateResponse{}, err
 		}
@@ -645,14 +650,10 @@ func executeDelegatedText(ctx context.Context, a *app.App, req sendDelegateReque
 		return sendDelegateResponse{}, err
 	}
 	preview := fetchLinkPreview(ctx, req.Message, req.NoPreview)
-	msgID, err := runSendOperation(ctx, reconnectForSend(a), func(ctx context.Context) (types.MessageID, error) {
-		return sendTextMessage(ctx, a, toJID, req.Message, req.ReplyTo, req.ReplyToSender, preview, mentionedJIDs, ephemeral, textSendOptions{allowSelf: req.AllowSelf})
-	})
+	msgID, storeErr, err := sendTextWithHistory(ctx, a, reconnectForSend(a), toJID, req.Message, req.ReplyTo, req.ReplyToSender, preview, mentionedJIDs, ephemeral, textSendOptions{allowSelf: req.AllowSelf})
 	if err != nil {
 		return sendDelegateResponse{}, err
 	}
-	now := time.Now().UTC()
-	storeErr := persistOutboundText(ctx, a, toJID, string(msgID), req.Message, now, req.ReplyTo, req.ReplyToSender)
 	waitForPostSendRetryReceipts(ctx, millisDuration(req.PostSendWaitMS, 0))
 	resp := sendDelegateResponse{OK: true, Sent: true, To: toJID.String(), ID: string(msgID)}
 	if storeErr != nil {

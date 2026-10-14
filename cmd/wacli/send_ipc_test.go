@@ -488,12 +488,17 @@ func TestExecuteDelegatedSendRoutesMarkRead(t *testing.T) {
 	}
 	t.Cleanup(a.Close)
 
-	_, err = executeDelegatedSend(context.Background(), a, sendDelegateRequest{
-		Version: sendDelegateVersion,
-		Kind:    "mark_read",
-	})
-	if err == nil || !strings.Contains(err.Error(), "--to is required") {
-		t.Fatalf("error = %v, want mark-read recipient validation", err)
+	for _, req := range []sendDelegateRequest{
+		{Kind: markReadKind},
+		{Kind: markReadThroughKind, ThroughMessageID: "handled"},
+		{Kind: markReadThroughKind, ThroughMessageID: "handled", Receipts: true},
+		{Kind: markReadSelfThroughKind, ThroughMessageID: "handled"},
+	} {
+		req.Version = sendDelegateVersion
+		_, err = executeDelegatedSend(context.Background(), a, req)
+		if err == nil || !strings.Contains(err.Error(), "--to is required") {
+			t.Fatalf("kind %s: error = %v, want mark-read recipient validation", req.Kind, err)
+		}
 	}
 }
 
@@ -516,6 +521,13 @@ func (f *fakeDelegatedMarkReadApp) MarkChatReadWithReceipts(_ context.Context, c
 		f.receiptCalls <- chat
 	}
 	return f.receipts, types.ReceiptType("unknown"), nil
+}
+
+func (f *fakeDelegatedMarkReadApp) MarkChatReadWithReceiptsThrough(ctx context.Context, chat types.JID, id string) (int, types.ReceiptType, error) {
+	if f.throughIDs != nil {
+		f.throughIDs <- id
+	}
+	return f.MarkChatReadWithReceipts(ctx, chat)
 }
 
 func (f *fakeDelegatedMarkReadApp) MarkChatRead(_ context.Context, chat types.JID, read bool) error {
@@ -596,6 +608,7 @@ func TestChatsMarkReadDelegatesThroughProductionServerWhenStoreLocked(t *testing
 		{name: "mark-read", command: "mark-read", read: true},
 		{name: "mark-unread", command: "mark-unread", read: false},
 		{name: "mark-read receipts", command: "mark-read", read: true, receipts: true},
+		{name: "bounded ordinary receipts", command: "mark-read", read: true, receipts: true, throughID: "handled"},
 		{name: "mark-read through", command: "mark-read", read: true, throughID: "handled"},
 		{name: "mark-read self through", command: "mark-read", read: true, throughID: "handled", selfOnly: true},
 	}
@@ -620,6 +633,16 @@ func TestChatsMarkReadDelegatesThroughProductionServerWhenStoreLocked(t *testing
 			}
 
 			if tt.receipts {
+				if tt.throughID != "" {
+					select {
+					case id := <-fake.throughIDs:
+						if id != tt.throughID {
+							t.Fatalf("bounded receipt cutoff = %q", id)
+						}
+					default:
+						t.Fatal("bounded receipt cutoff never reached owner")
+					}
+				}
 				select {
 				case call := <-fake.calls:
 					t.Fatalf("receipt mode entered app state: %+v", call)
@@ -700,8 +723,15 @@ func TestChatsMarkReadThroughOldOwnerRejectsBeforeStateChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stop()
-	for _, kind := range []string{markReadThroughKind, markReadSelfThroughKind} {
+	for _, tc := range []struct {
+		kind     string
+		receipts bool
+	}{{kind: markReadThroughKind}, {kind: markReadSelfThroughKind}, {kind: markReadThroughKind, receipts: true}} {
+		kind := tc.kind
 		args := []string{"--store", storeDir, "--timeout", "750ms", "chats", "mark-read", "--chat", "123@s.whatsapp.net", "--through-message-id", "handled"}
+		if tc.receipts {
+			args = append(args, "--receipts")
+		}
 		if kind == markReadSelfThroughKind {
 			args = append(args, "--self-only")
 		}
