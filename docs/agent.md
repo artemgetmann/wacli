@@ -71,6 +71,13 @@ Failures with a possibly dispatched message need exact reconciliation first.
 
 ## Audio provider
 
+Retrieve exact media first with `wacli --read-only media download --chat JID
+--id ID --output PATH --json`. Verified saved copies work while sync owns the
+store. After HTTP 403, 404 or 410, explicitly recover the same message with
+`wacli media download --chat JID --id ID --output PATH --retry-on-phone --json`.
+This delegates to the running owner without stopping sync. Never substitute a
+date-filtered batch retry or another recording; no response is not deletion.
+
 `transcribe` preserves the original, probes the audio stream, normalizes Opus
 and unsupported/extensionless formats to bounded MP3 chunks, and retains MP3/WAV
 fast paths. Provider errors and an empty successful transcript are separate.
