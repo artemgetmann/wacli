@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -125,6 +126,17 @@ func delegateSend(ctx context.Context, flags *rootFlags, req sendDelegateRequest
 	defer conn.Close()
 
 	deadline := time.Now().Add(commandTimeout(flags))
+	if req.Kind == mediaDownloadKind {
+		// Cache inspection and lock waits already consumed this command's
+		// budget. Never grant recovery a new full timeout after those stages.
+		if parentDeadline, ok := ctx.Deadline(); ok && parentDeadline.Before(deadline) {
+			deadline = parentDeadline
+		}
+		// DialContext alone does not cancel an established socket. Closing it
+		// wakes a blocked read and tells the owner to cancel this media request.
+		stopCancel := context.AfterFunc(ctx, func() { _ = conn.Close() })
+		defer stopCancel()
+	}
 	req.DeadlineUnixMS = deadline.UnixMilli()
 	_ = conn.SetDeadline(deadline)
 	if err := json.NewEncoder(conn).Encode(req); err != nil {
@@ -132,6 +144,9 @@ func delegateSend(ctx context.Context, flags *rootFlags, req sendDelegateRequest
 	}
 	var resp sendDelegateResponse
 	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		if req.Kind == mediaDownloadKind && ctx.Err() != nil {
+			return sendDelegateResponse{}, fmt.Errorf("media caller stopped waiting; recovery may have completed, check the exact local file before retrying: %w", ctx.Err())
+		}
 		var netErr net.Error
 		if errors.As(err, &netErr) && netErr.Timeout() {
 			if req.Kind == mediaDownloadKind {
@@ -287,6 +302,12 @@ func handleSendDelegateConn(ctx context.Context, conn net.Conn, execute sendDele
 			_ = json.NewEncoder(conn).Encode(sendDelegateResponse{OK: false, Error: "unsupported media recovery delegate"})
 			return
 		}
+		// Requests carry one JSON value and clients leave the socket open for
+		// the reply. A peer disconnect cancels queued or running recovery; it
+		// must not silently continue after a canceled caller goes away.
+		// Drain trailing framing bytes, including a split JSON newline; only
+		// EOF/read failure denotes disconnection, not that harmless whitespace.
+		go func() { _, _ = io.Copy(io.Discard, conn); cancel() }()
 		select {
 		case <-requestCtx.Done():
 			_ = json.NewEncoder(conn).Encode(sendDelegateResponse{OK: false, Error: "media request expired before recovery dispatch"})
