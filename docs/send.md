@@ -6,6 +6,8 @@ Read when: sending text, files, stickers, locations, polls, status broadcasts, q
 
 When `sync --follow` is already running for the same store, send commands delegate the send to that running process instead of opening a second WhatsApp session. This keeps scripts usable while continuous sync owns the store lock.
 
+Generic connection errors do not automatically start a fresh send: a disconnect can happen after a message frame was submitted but before its acknowledgement arrived. The outcome can therefore be uncertain. Inspect history before deciding whether to send again. Known preparation/lookup failures can still retry once; an ordinary message-acknowledgement timeout also does not trigger a fresh outer send. This policy does not establish recipient delivery or guarantee server-side deduplication.
+
 ## Commands
 
 ```bash
