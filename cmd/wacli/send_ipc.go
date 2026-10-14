@@ -645,14 +645,10 @@ func executeDelegatedText(ctx context.Context, a *app.App, req sendDelegateReque
 		return sendDelegateResponse{}, err
 	}
 	preview := fetchLinkPreview(ctx, req.Message, req.NoPreview)
-	msgID, err := runSendOperation(ctx, reconnectForSend(a), func(ctx context.Context) (types.MessageID, error) {
-		return sendTextMessage(ctx, a, toJID, req.Message, req.ReplyTo, req.ReplyToSender, preview, mentionedJIDs, ephemeral, textSendOptions{allowSelf: req.AllowSelf})
-	})
+	msgID, storeErr, err := sendTextWithHistory(ctx, a, reconnectForSend(a), toJID, req.Message, req.ReplyTo, req.ReplyToSender, preview, mentionedJIDs, ephemeral, textSendOptions{allowSelf: req.AllowSelf})
 	if err != nil {
 		return sendDelegateResponse{}, err
 	}
-	now := time.Now().UTC()
-	storeErr := persistOutboundText(ctx, a, toJID, string(msgID), req.Message, now, req.ReplyTo, req.ReplyToSender)
 	waitForPostSendRetryReceipts(ctx, millisDuration(req.PostSendWaitMS, 0))
 	resp := sendDelegateResponse{OK: true, Sent: true, To: toJID.String(), ID: string(msgID)}
 	if storeErr != nil {
