@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openclaw/wacli/internal/store"
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waSyncAction"
@@ -271,5 +272,80 @@ func TestPrivateReadSelfBoundarySurvivesReceiptEchoAndReopen(t *testing.T) {
 			f.emit(receipt)
 			assertBoundaryMarker(t, a, chat, false)
 		})
+	}
+}
+
+func TestReceiptCompletionMarkerOnlyRace(t *testing.T) {
+	for _, mode := range []struct {
+		name    string
+		bounded bool
+	}{{"bounded", true}, {"unbounded-control", false}} {
+		for _, arrival := range []struct {
+			name  string
+			delay time.Duration
+		}{{"same-second", 0}, {"later-second", time.Second}} {
+			t.Run(mode.name+"/"+arrival.name, func(t *testing.T) {
+				a := newTestApp(t)
+				f := newFakeWA()
+				a.wa = f
+				chat := types.NewJID("456", types.DefaultUserServer)
+				seedReceiptChat(t, a, chat, "dm", []store.UpsertMessageParams{{MsgID: "handled", SenderJID: chat.String()}}, 0)
+				if err := a.db.SetChatUnread(chat.String(), true); err != nil {
+					t.Fatal(err)
+				}
+				anchor, err := a.db.ReadBoundary(chat.String(), "handled")
+				if err != nil {
+					t.Fatal(err)
+				}
+				installBoundaryReplayHandler(t, a, f)
+				// Selection sees only A. B arrives during A's transport while the
+				// unread estimate remains marker-only, before completion persists.
+				f.onReadReceipt = func(int) (types.ReceiptType, error) {
+					err := a.db.UpsertMessage(store.UpsertMessageParams{ChatJID: chat.String(), MsgID: "newer", SenderJID: chat.String(), Text: "newer", Timestamp: anchor.Timestamp.Add(arrival.delay)})
+					return types.ReceiptTypeReadSelf, err
+				}
+				var n int
+				if mode.bounded {
+					n, _, err = a.MarkChatReadWithReceiptsThrough(t.Context(), chat, "handled")
+				} else {
+					n, _, err = a.MarkChatReadWithReceipts(t.Context(), chat)
+				}
+				calls := readReceiptCallsOf(f)
+				if err != nil || n != 1 || len(calls) != 1 || len(calls[0].ids) != 1 || calls[0].ids[0] != "handled" {
+					t.Fatalf("receipt selection = %d %v calls=%+v; want only A dispatched", n, err, calls)
+				}
+				// Check completion itself before an event could mask its result.
+				assertBoundaryMarker(t, a, chat, mode.bounded)
+
+				f.emit(&events.Receipt{MessageSource: types.MessageSource{Chat: chat}, Type: types.ReceiptTypeReadSelf, Timestamp: anchor.Timestamp.Add(time.Hour), MessageIDs: []types.MessageID{"handled"}})
+				assertBoundaryMarker(t, a, chat, mode.bounded)
+				echo := boundaryReadEvent(chat, anchor.Timestamp, "handled")
+				f.emit(echo)
+				assertBoundaryMarker(t, a, chat, mode.bounded)
+
+				// Replay the exact read via the real recovery persistence path.
+				// A separate state write ensures no second read completion can
+				// conceal a replay that incorrectly clears or restores the marker.
+				replayed := false
+				f.appStateFetchEvent = func(_ string, fullSync, _ bool) any {
+					if !fullSync {
+						t.Fatal("expected full app-state replay")
+					}
+					replayed = true
+					echo.FromFullSync = true
+					return echo
+				}
+				if err := a.db.MarkAppStateRecoveryRequired(string(appstate.WAPatchRegularLow)); err != nil {
+					t.Fatal(err)
+				}
+				if err := a.PinChat(t.Context(), chat, true); err != nil {
+					t.Fatal(err)
+				}
+				if !replayed {
+					t.Fatal("read event did not reach recovery replay")
+				}
+				assertBoundaryMarker(t, a, chat, mode.bounded)
+			})
+		}
 	}
 }
