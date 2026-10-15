@@ -84,7 +84,13 @@ func (a *App) markChatReadWithReceipts(ctx context.Context, jid types.JID, throu
 	for _, m := range msgs {
 		ids = append(ids, m.MsgID)
 	}
-	if err := a.db.ClearChatUnreadThrough(chatJID, msgs[len(msgs)-1].Timestamp, ids); err != nil {
+	clearUnread := a.db.ClearChatUnreadThrough
+	if throughID != "" {
+		// A marker-only arrival after selection must stay pending even when
+		// its counter has not advanced by the time receipt transport finishes.
+		clearUnread = a.db.ClearChatUnreadThroughPreservingMarker
+	}
+	if err := clearUnread(chatJID, msgs[len(msgs)-1].Timestamp, ids); err != nil {
 		return sent, receipt, fmt.Errorf("receipts sent, but updating local unread state failed: %w", err)
 	}
 	return sent, receipt, nil
