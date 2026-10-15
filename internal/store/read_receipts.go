@@ -8,6 +8,11 @@ import (
 
 const receiptEligible = "chat_jid = ? AND from_me = 0 AND revoked = 0 AND deleted_for_me = 0 AND deleted_at IS NULL AND COALESCE(reaction_to_id,'') = '' AND COALESCE(reaction_emoji,'') = '' AND (COALESCE(display_text,'') != '(message)' OR TRIM(COALESCE(text,'')) != '')"
 
+// Private receipts require dated readable inbound content. Use the same
+// predicate for selection and completion so excluded rows cannot hide missing
+// history behind an inflated available-message count.
+const selfReceiptEligible = receiptEligible + " AND ts > 0"
+
 // ReadBoundary resolves an exact inbound anchor before app-state recovery can
 // start. The chat predicate prevents an ID from another chat becoming a cutoff.
 func (d *DB) ReadBoundary(jid, id string) (MessageInfo, error) {
@@ -126,10 +131,19 @@ func (d *DB) SelfReadReceiptCandidatesThrough(jid, id string) ([]MessageInfo, er
 		return nil, err
 	}
 	defer tx.Rollback()
-	const eligible = "chat_jid = ? AND from_me = 0 AND ts > 0 AND revoked = 0 AND deleted_for_me = 0 AND deleted_at IS NULL AND COALESCE(reaction_to_id,'') = '' AND COALESCE(reaction_emoji,'') = '' AND (COALESCE(display_text,'') != '(message)' OR TRIM(COALESCE(text,'')) != '')"
+	const eligible = selfReceiptEligible
 	var ts, rowID int64
 	if err := tx.QueryRow("SELECT ts, rowid FROM messages WHERE "+eligible+" AND msg_id = ?", jid, id).Scan(&ts, &rowID); err != nil {
 		return nil, fmt.Errorf("handled boundary must be an eligible stored inbound message in this chat: %w", err)
+	}
+	// An anchor bounds known content; it cannot prove where messages missing
+	// from local history belong. Refuse before any wire or group lookup.
+	var count, available int
+	if err := tx.QueryRow("SELECT unread_count, (SELECT COUNT(*) FROM messages WHERE "+eligible+") FROM chats WHERE jid = ?", jid, jid).Scan(&count, &available); err != nil {
+		return nil, err
+	}
+	if count > available {
+		return nil, fmt.Errorf("chat has %d unread messages but only %d eligible messages stored; sync its history before sending private receipts", count, available)
 	}
 	// Read the marker and later eligible rows in this same snapshot. A stale
 	// zero counter can defer older receipts too; keeping work pending is safer
