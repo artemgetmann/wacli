@@ -6,6 +6,7 @@ import (
 	"errors"
 	appStore "github.com/openclaw/wacli/internal/store"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -84,6 +85,11 @@ func TestRealSDKRecoveryRequiresUsableSnapshotKey(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer c.Close()
+			// Drive the pinned SDK's real recovery parser and processor, rather
+			// than injecting a completion event. Production-filter diagnostics
+			// must distinguish entry, rejected keys and successful dispatch.
+			var recoveryLog bytes.Buffer
+			c.client.Log = newWhatsmeowLogger("RecoveryFixture", "ERROR", &recoveryLog)
 			ctx := t.Context()
 			id := []byte{1, 2, 3}
 			var data []byte
@@ -134,6 +140,14 @@ func TestRealSDKRecoveryRequiresUsableSnapshotKey(t *testing.T) {
 			}
 			if archived != usable || complete != usable || version != wantVersion {
 				t.Fatalf("archive=%v complete=%v version=%d usable=%v", archived, complete, version, usable)
+			}
+			logText := recoveryLog.String()
+			if !strings.Contains(logText, "processing_started") || strings.Contains(logText, "synthetic-recovery") {
+				t.Fatalf("missing or unsafe SDK processing diagnostic: %q", logText)
+			}
+			if strings.Contains(logText, "processing_completed") != usable ||
+				strings.Contains(logText, "snapshot_key_unavailable") == usable {
+				t.Fatalf("SDK diagnostic does not match real processing outcome usable=%v: %q", usable, logText)
 			}
 		})
 	}

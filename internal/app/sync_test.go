@@ -2595,8 +2595,10 @@ func TestArchiveChatBoundsPrimaryRecoveryWait(t *testing.T) {
 	if archiveCalls != 0 {
 		t.Fatalf("archive calls = %d, want 0 after recovery timeout", archiveCalls)
 	}
-	if handlers != 0 {
-		t.Fatalf("event handlers after recovery timeout = %d, want 0", handlers)
+	// The synchronous deadline remains bounded while one observer owns a late
+	// primary response. App.Close must remove that observer before closing SQL.
+	if handlers != 1 {
+		t.Fatalf("event handlers after recovery timeout = %d, want 1 late observer", handlers)
 	}
 	required, markerErr := a.db.AppStateRecoveryRequired(string(appstate.WAPatchRegularLow))
 	if markerErr != nil {

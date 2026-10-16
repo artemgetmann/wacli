@@ -180,6 +180,16 @@ func safeAppStateRecoveryDiagnostic(level, msg string, args []any) (string, bool
 		}
 	} else if level == "INFO" && msg == "Ignoring app state recovery response for %s as current version %d is newer than or equal to recovery version %d" {
 		reason = "stale_version"
+	} else if level == "DEBUG" {
+		// Surface only fixed milestones from the pinned SDK. Request IDs,
+		// collection strings and snapshot versions remain unformatted: these
+		// observations prove processing progress without leaking arguments.
+		switch msg {
+		case "Handling app state recovery response for %s":
+			reason = "processing_started"
+		case "Finished handling app state recovery response for %s (%s to v%d)":
+			reason = "processing_completed"
+		}
 	}
 	if reason == "" {
 		return "", false
