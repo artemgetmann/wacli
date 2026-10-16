@@ -197,8 +197,15 @@ func (a *App) acquireChatStateSync(ctx context.Context) (func(), error) {
 	return release, nil
 }
 
-func (a *App) beginChatStateWrite(ctx context.Context, collection appstate.WAPatchName) (func(), error) {
+func (a *App) beginChatStateWrite(ctx context.Context, collection appstate.WAPatchName) (_ func(), operationErr error) {
+	ctx = a.chatStateDiagnosticContext(ctx)
+	// This operation measures pre-write synchronization only. Its success does
+	// not imply that the subsequent chat mutation was sent or acknowledged.
+	finishOperation := a.beginChatStatePhase(ctx, collection, "operation")
+	defer func() { finishOperation(operationErr) }()
+	finishGate := a.beginChatStatePhase(ctx, collection, "gate")
 	release, err := a.acquireChatStateSync(ctx)
+	finishGate(err)
 	if err != nil {
 		return nil, err
 	}
@@ -279,6 +286,7 @@ func (a *App) replayRequiredAppState(ctx context.Context, collection appstate.WA
 func (a *App) recoverMismatchingAppState(ctx context.Context, collection appstate.WAPatchName, markerGeneration int64, tracker *appStatePersistenceTracker, onRequested func(types.MessageID)) error {
 	ticket := a.appStatePersist.reserve()
 	eventsToPersist, recoveryErr := a.waitForPrimaryAppStateRecovery(ctx, collection, onRequested)
+	finishDrain := a.beginChatStatePhase(ctx, collection, "persistence_drain")
 	persistCtx := context.WithoutCancel(ctx)
 	result := make(chan error, 1)
 	frontier := a.appStatePersist.complete(ticket, func() {
@@ -289,9 +297,12 @@ func (a *App) recoverMismatchingAppState(ctx context.Context, collection appstat
 		result <- a.persistFetchedAppStateEvents(persistCtx, eventsToPersist, tracker)
 	})
 	if err := a.appStatePersist.waitThrough(persistCtx, frontier); err != nil {
+		finishDrain(err)
 		return err
 	}
-	if persistenceErr := <-result; persistenceErr != nil {
+	persistenceErr := <-result
+	finishDrain(persistenceErr)
+	if persistenceErr != nil {
 		return fmt.Errorf("persist recovered app state %s: %w", collection, persistenceErr)
 	}
 	if recoveryErr != nil {
@@ -301,6 +312,9 @@ func (a *App) recoverMismatchingAppState(ctx context.Context, collection appstat
 }
 
 func (a *App) waitForPrimaryAppStateRecovery(ctx context.Context, collection appstate.WAPatchName, onRequested func(types.MessageID)) ([]any, error) {
+	// Start observation before requesting: completion may be dispatched before
+	// RequestAppStateRecovery returns its acknowledgement.
+	finishComplete := a.beginChatStatePhase(ctx, collection, "recovery_complete")
 	completed := make(chan []any, 1)
 	var mu sync.Mutex
 	var captured []any
@@ -316,6 +330,7 @@ func (a *App) waitForPrimaryAppStateRecovery(ctx context.Context, collection app
 		if syncComplete, ok := evt.(*events.AppStateSyncComplete); ok {
 			if syncComplete != nil && syncComplete.Recovery && syncComplete.Name == collection {
 				finished = true
+				finishComplete(nil)
 				completed <- append([]any(nil), captured...)
 			}
 			return
@@ -326,9 +341,14 @@ func (a *App) waitForPrimaryAppStateRecovery(ctx context.Context, collection app
 	})
 	defer a.wa.RemoveEventHandler(handlerID)
 
+	finishRequest := a.beginChatStatePhase(ctx, collection, "recovery_request")
 	requestID, err := a.wa.RequestAppStateRecovery(ctx, string(collection))
+	finishRequest(err)
 	if err != nil {
 		mu.Lock()
+		if !finished {
+			finishComplete(err)
+		}
 		finished = true
 		mu.Unlock()
 		return nil, fmt.Errorf("request WhatsApp app state recovery for %s: %w", collection, err)
@@ -341,6 +361,9 @@ func (a *App) waitForPrimaryAppStateRecovery(ctx context.Context, collection app
 		return eventsToPersist, nil
 	case <-ctx.Done():
 		mu.Lock()
+		if !finished {
+			finishComplete(ctx.Err())
+		}
 		finished = true
 		mu.Unlock()
 		return nil, fmt.Errorf("wait for WhatsApp app state recovery for %s: %w", collection, ctx.Err())
@@ -353,8 +376,16 @@ func (a *App) fetchAndPersistAppState(ctx context.Context, collection appstate.W
 	func() {
 		releaseFetch := a.beginManualAppStateFetch(collection)
 		defer releaseFetch()
+		phase := "fetch_delta"
+		if fullSync {
+			phase = "fetch_full"
+		}
+		finishFetch := a.beginChatStatePhase(ctx, collection, phase)
 		eventsToPersist, fetchErr = a.wa.FetchAppStateEvents(ctx, string(collection), fullSync, false)
+		finishFetch(fetchErr)
 	}()
+	finishDrain := a.beginChatStatePhase(ctx, collection, "persistence_drain")
+	defer func() { finishDrain(persistenceErr) }()
 	result := make(chan error, 1)
 	frontier := a.appStatePersist.complete(ticket, func() {
 		result <- a.persistFetchedAppStateEvents(ctx, eventsToPersist, tracker)
