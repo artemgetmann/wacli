@@ -68,7 +68,7 @@ func (a *App) emitChatStatePhase(ctx context.Context, collection appstate.WAPatc
 		return
 	}
 	switch phase {
-	case "operation", "gate", "fetch_delta", "fetch_full", "recovery_request", "recovery_complete", "persistence_drain":
+	case "operation", "gate", "fetch_delta", "fetch_full", "recovery_request", "recovery_complete", "persistence_drain", "late_recovery_complete", "late_persistence_drain":
 	default:
 		return
 	}

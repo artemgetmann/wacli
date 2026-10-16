@@ -47,6 +47,42 @@ func diagnosticPhases(events []map[string]any) []string {
 	return result
 }
 
+func TestChatStateDiagnosticsLateCompletionHasSeparatePhase(t *testing.T) {
+	a, f := lateRecoveryTestApp(t, types.NewJID("15550000090", types.DefaultUserServer))
+	var buf bytes.Buffer
+	a.opts.Events = out.NewEventWriter(&buf, true)
+	ctx, cancel := context.WithCancel(a.chatStateDiagnosticContext(t.Context()))
+	f.requestAppStateRecovery = func(context.Context, string) (types.MessageID, error) {
+		cancel()
+		return "synthetic-request", nil
+	}
+	generation, _, err := a.db.BeginAppStateRecovery("regular_low")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.recoverMismatchingAppState(ctx, appstate.WAPatchRegularLow, generation, &appStatePersistenceTracker{}, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected canceled synchronous wait: %v", err)
+	}
+	// A late valid sentinel belongs to the background observation, not a
+	// second successful terminal result for the already-canceled waiter.
+	f.emit(&events.AppStateSyncComplete{Name: appstate.WAPatchRegularLow, Recovery: true})
+	a.appStateRecoveryWorkers.Wait()
+	phases := diagnosticPhases(diagnosticEvents(t, &buf))
+	want := []string{"recovery_complete:canceled", "late_recovery_complete:started", "late_recovery_complete:ok", "late_persistence_drain:started", "late_persistence_drain:ok"}
+	position := 0
+	for _, phase := range phases {
+		if phase == "recovery_complete:ok" {
+			t.Fatalf("late completion contradicted the synchronous result: %v", phases)
+		}
+		if position < len(want) && phase == want[position] {
+			position++
+		}
+	}
+	if position != len(want) {
+		t.Fatalf("missing late lifecycle: %v", phases)
+	}
+}
+
 func TestChatStateDiagnosticsImmediateRecoveryOrder(t *testing.T) {
 	a := newTestApp(t)
 	var buf bytes.Buffer
@@ -110,7 +146,7 @@ func TestChatStateDiagnosticsRecoveryIgnoresOtherCompletion(t *testing.T) {
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("error=%v", err)
 			}
-			want := []string{"recovery_complete:started", "recovery_request:started", "recovery_request:ok", "recovery_complete:canceled"}
+			want := []string{"recovery_complete:started", "recovery_request:started", "recovery_request:ok", "recovery_complete:canceled", "late_recovery_complete:started"}
 			if got := diagnosticPhases(diagnosticEvents(t, &buf)); !reflect.DeepEqual(got, want) {
 				t.Fatalf("phases=%v", got)
 			}
@@ -218,7 +254,10 @@ func TestChatStateDiagnosticsRecoveryDeadline(t *testing.T) {
 		t.Fatalf("error=%v", err)
 	}
 	got := diagnosticEvents(t, &buf)
-	last := got[len(got)-1]
+	if len(got) < 2 || got[len(got)-1]["phase"] != "late_recovery_complete" || got[len(got)-1]["result"] != "started" {
+		t.Fatalf("missing distinct late observer: %v", got)
+	}
+	last := got[len(got)-2]
 	if last["phase"] != "recovery_complete" || last["result"] != "deadline" || last["remaining_ms"] != float64(0) {
 		t.Fatalf("terminal=%v", last)
 	}

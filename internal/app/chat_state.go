@@ -333,6 +333,7 @@ type appStateRecoveryCapture struct {
 	finished       bool
 	completed      chan appStateRecoveryCompletion
 	finishComplete func(error)
+	diagnosticCtx  context.Context
 }
 
 // appStateRecoveryCompletion carries the captured snapshot events together
@@ -347,7 +348,7 @@ type appStateRecoveryCompletion struct {
 }
 
 func (a *App) newAppStateRecoveryCapture(ctx context.Context, collection appstate.WAPatchName) *appStateRecoveryCapture {
-	c := &appStateRecoveryCapture{app: a, collection: collection, completed: make(chan appStateRecoveryCompletion, 1), finishComplete: a.beginChatStatePhase(ctx, collection, "recovery_complete")}
+	c := &appStateRecoveryCapture{app: a, collection: collection, completed: make(chan appStateRecoveryCompletion, 1), finishComplete: a.beginChatStatePhase(ctx, collection, "recovery_complete"), diagnosticCtx: context.WithoutCancel(ctx)}
 	// whatsmeow dispatches recovery mutations synchronously and emits this
 	// collection's AppStateSyncComplete last, so the sentinel closes the drain.
 	c.handlerID = a.wa.AddEventHandler(c.handle)
@@ -427,6 +428,9 @@ func (a *App) waitForPrimaryAppStateRecovery(ctx context.Context, collection app
 		capture.mu.Lock()
 		if !capture.finished {
 			capture.finishComplete(ctx.Err())
+			// The caller's phase is terminal. A retained observer may complete
+			// later, under a separate phase that cannot contradict that result.
+			capture.finishComplete = a.beginChatStatePhase(capture.diagnosticCtx, collection, "late_recovery_complete")
 		}
 		capture.mu.Unlock()
 		return nil, capture, fmt.Errorf("wait for WhatsApp app state recovery for %s: %w", collection, ctx.Err())
@@ -498,16 +502,20 @@ func (a *App) runLateAppStateRecovery(collection appstate.WAPatchName, cont *lat
 	// arrived after the snapshot persists after it, even though this goroutine
 	// runs outside whatsmeow's dispatch and holds no chatStateSync.
 	persistCtx := context.Background()
+	finishDrain := a.beginChatStatePhase(cont.capture.diagnosticCtx, collection, "late_persistence_drain")
 	tracker := &appStatePersistenceTracker{}
 	result := make(chan error, 1)
 	frontier := a.appStatePersist.complete(completion.ticket, func() {
 		result <- a.persistFetchedAppStateEvents(persistCtx, completion.events, tracker)
 	})
 	if err := a.appStatePersist.waitThrough(persistCtx, frontier); err != nil {
+		finishDrain(err)
 		a.warnAppStateRecovery(string(collection), err)
 		return
 	}
-	if persistenceErr := <-result; persistenceErr != nil {
+	persistenceErr := <-result
+	finishDrain(persistenceErr)
+	if persistenceErr != nil {
 		a.warnAppStateRecovery(string(collection), fmt.Errorf("persist late recovered app state %s: %w", collection, persistenceErr))
 		return
 	}
