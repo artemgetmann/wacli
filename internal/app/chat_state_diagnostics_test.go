@@ -103,7 +103,10 @@ func TestChatStateDiagnosticsRecoveryIgnoresOtherCompletion(t *testing.T) {
 				f.emit(&events.AppStateSyncComplete{Name: name, Recovery: recovery})
 				cancel()
 			}
-			_, err := a.waitForPrimaryAppStateRecovery(ctx, appstate.WAPatchRegularLow, nil)
+			_, capture, err := a.waitForPrimaryAppStateRecovery(ctx, appstate.WAPatchRegularLow, nil)
+			if capture != nil {
+				defer capture.stop()
+			}
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("error=%v", err)
 			}
@@ -207,7 +210,10 @@ func TestChatStateDiagnosticsRecoveryDeadline(t *testing.T) {
 	a.wa = newFakeWA()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
-	_, err := a.waitForPrimaryAppStateRecovery(a.chatStateDiagnosticContext(ctx), appstate.WAPatchRegularLow, nil)
+	_, capture, err := a.waitForPrimaryAppStateRecovery(a.chatStateDiagnosticContext(ctx), appstate.WAPatchRegularLow, nil)
+	if capture != nil {
+		defer capture.stop()
+	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("error=%v", err)
 	}
@@ -250,7 +256,10 @@ func TestChatStateDiagnosticsRequestFailure(t *testing.T) {
 	f := &appStateContextWA{fakeWA: newFakeWA()}
 	f.requestAppStateRecovery = func(context.Context, string) (types.MessageID, error) { return "private-id", wantErr }
 	a.wa = f
-	_, err := a.waitForPrimaryAppStateRecovery(a.chatStateDiagnosticContext(t.Context()), appstate.WAPatchRegularLow, nil)
+	_, capture, err := a.waitForPrimaryAppStateRecovery(a.chatStateDiagnosticContext(t.Context()), appstate.WAPatchRegularLow, nil)
+	if capture != nil {
+		defer capture.stop()
+	}
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("error=%v", err)
 	}
