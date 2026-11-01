@@ -208,7 +208,7 @@ func (a *App) OpenWAContext(ctx context.Context) error {
 	}
 	if a.wa == nil {
 		sessionPath := filepath.Join(a.opts.StoreDir, "session.db")
-		cli, err := wa.NewWithContext(ctx, wa.Options{StorePath: sessionPath, KeyStateStore: a.db, AppStateConsumer: a.consumeAppStateDelivery})
+		cli, err := wa.New(wa.Options{InitContext: ctx, StorePath: sessionPath, KeyStateStore: a.db, AppStateConsumer: a.consumeAppStateDelivery})
 		if err != nil {
 			return err
 		}

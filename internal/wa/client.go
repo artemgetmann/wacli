@@ -25,6 +25,8 @@ import (
 
 type Options struct {
 	StorePath string
+	// InitContext bounds opening/upgrading and is not retained after startup.
+	InitContext context.Context
 	// The application owns durable, account-scoped key recovery metadata.
 	KeyStateStore    AppStateKeyStateStore
 	AppStateConsumer func(context.Context, *wastore.AppStateDelivery) error
@@ -47,8 +49,12 @@ func (c *Client) ContactJournal() *ContactStoreJournal {
 	return c.contactJournal
 }
 
-func New(opts Options) (*Client, error) { return NewWithContext(context.Background(), opts) }
-func NewWithContext(ctx context.Context, opts Options) (*Client, error) {
+func New(opts Options) (*Client, error) {
+	ctx := opts.InitContext
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	opts.InitContext = nil
 	if strings.TrimSpace(opts.StorePath) == "" {
 		return nil, fmt.Errorf("StorePath is required")
 	}
