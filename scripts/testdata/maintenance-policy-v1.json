@@ -1,0 +1,913 @@
+[
+  {
+    "name": "new",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "create_draft",
+      "tested_missing_change"
+    ],
+    "error": false
+  },
+  {
+    "name": "repository-other/repo",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "other/repo",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "wrong_publication_repository"
+    ],
+    "error": false
+  },
+  {
+    "name": "publication_outcome-unknown",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "unknown",
+      "pr_inventory_complete": true,
+      "existing_prs": [],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "reconcile_publication_before_retry"
+    ],
+    "error": false
+  },
+  {
+    "name": "publication_outcome-verified",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "verified",
+      "pr_inventory_complete": true,
+      "existing_prs": [],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "verified_publication_missing_from_inventory"
+    ],
+    "error": false
+  },
+  {
+    "name": "pr_inventory_complete-False",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": false,
+      "existing_prs": [],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "deduplication_inventory_incomplete"
+    ],
+    "error": false
+  },
+  {
+    "name": "overlapping_owner-other-owner",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized.",
+      "overlapping_owner": "other-owner"
+    },
+    "expected": [
+      "hold",
+      "existing_owner_retains_work"
+    ],
+    "error": false
+  },
+  {
+    "name": "decision_only-True",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized.",
+      "decision_only": true
+    },
+    "expected": [
+      "hold",
+      "decision_or_ancestry_pending"
+    ],
+    "error": false
+  },
+  {
+    "name": "ancestry_pending-True",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized.",
+      "ancestry_pending": true
+    },
+    "expected": [
+      "hold",
+      "decision_or_ancestry_pending"
+    ],
+    "error": false
+  },
+  {
+    "name": "concrete_change-False",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [],
+      "concrete_change": false,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "concrete_isolated_change_not_proven"
+    ],
+    "error": false
+  },
+  {
+    "name": "missing_from_fork-False",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [],
+      "concrete_change": true,
+      "missing_from_fork": false,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "concrete_isolated_change_not_proven"
+    ],
+    "error": false
+  },
+  {
+    "name": "isolated_tests_passed-False",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": false,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "concrete_isolated_change_not_proven"
+    ],
+    "error": false
+  },
+  {
+    "name": "tested_head-abc",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "abc",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "exact_tested_head_required"
+    ],
+    "error": false
+  },
+  {
+    "name": "test_evidence-[]",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "tests_risks_rollout_required"
+    ],
+    "error": false
+  },
+  {
+    "name": "risks-",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "tests_risks_rollout_required"
+    ],
+    "error": false
+  },
+  {
+    "name": "rollout-",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": ""
+    },
+    "expected": [
+      "hold",
+      "tests_risks_rollout_required"
+    ],
+    "error": false
+  },
+  {
+    "name": "existing_prs-None",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": null,
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": null,
+    "error": true
+  },
+  {
+    "name": "existing_prs-[{}, {}, {}, {}, {},",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        {}
+      ],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": null,
+    "error": true
+  },
+  {
+    "name": "open",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [
+        {
+          "repository": "artemgetmann/wacli",
+          "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+          "url": "https://github.com/artemgetmann/wacli/pull/123",
+          "remote_verified": true,
+          "state": "open",
+          "draft": true,
+          "owned": true
+        }
+      ],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "update_existing_draft",
+      "owned_existing_draft"
+    ],
+    "error": false
+  },
+  {
+    "name": "equivalent",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [
+        {
+          "repository": "artemgetmann/wacli",
+          "finding_id": "other",
+          "url": "https://github.com/artemgetmann/wacli/pull/123",
+          "remote_verified": true,
+          "state": "open",
+          "draft": true,
+          "owned": true,
+          "equivalent_intent": true
+        }
+      ],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "update_existing_draft",
+      "owned_existing_draft"
+    ],
+    "error": false
+  },
+  {
+    "name": "multiple",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [
+        {
+          "repository": "artemgetmann/wacli",
+          "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+          "url": "https://github.com/artemgetmann/wacli/pull/123",
+          "remote_verified": true,
+          "state": "open",
+          "draft": true,
+          "owned": true
+        },
+        {
+          "repository": "artemgetmann/wacli",
+          "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+          "url": "https://github.com/artemgetmann/wacli/pull/123",
+          "remote_verified": true,
+          "state": "open",
+          "draft": true,
+          "owned": true
+        }
+      ],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "multiple_matching_prs_reconcile"
+    ],
+    "error": false
+  },
+  {
+    "name": "pr-state-closed",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [
+        {
+          "repository": "artemgetmann/wacli",
+          "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+          "url": "https://github.com/artemgetmann/wacli/pull/123",
+          "remote_verified": true,
+          "state": "closed",
+          "draft": true,
+          "owned": true
+        }
+      ],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "closed_pr_disposition_requires_reconciliation"
+    ],
+    "error": false
+  },
+  {
+    "name": "pr-state-merged",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [
+        {
+          "repository": "artemgetmann/wacli",
+          "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+          "url": "https://github.com/artemgetmann/wacli/pull/123",
+          "remote_verified": true,
+          "state": "merged",
+          "draft": true,
+          "owned": true
+        }
+      ],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "closed_pr_disposition_requires_reconciliation"
+    ],
+    "error": false
+  },
+  {
+    "name": "pr-owned-False",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [
+        {
+          "repository": "artemgetmann/wacli",
+          "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+          "url": "https://github.com/artemgetmann/wacli/pull/123",
+          "remote_verified": true,
+          "state": "open",
+          "draft": true,
+          "owned": false
+        }
+      ],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "existing_pr_not_owned_draft"
+    ],
+    "error": false
+  },
+  {
+    "name": "pr-draft-False",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [
+        {
+          "repository": "artemgetmann/wacli",
+          "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+          "url": "https://github.com/artemgetmann/wacli/pull/123",
+          "remote_verified": true,
+          "state": "open",
+          "draft": false,
+          "owned": true
+        }
+      ],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "existing_pr_not_owned_draft"
+    ],
+    "error": false
+  },
+  {
+    "name": "pr-remote_verified-False",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [
+        {
+          "repository": "artemgetmann/wacli",
+          "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+          "url": "https://github.com/artemgetmann/wacli/pull/123",
+          "remote_verified": false,
+          "state": "open",
+          "draft": true,
+          "owned": true
+        }
+      ],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "matching_pr_remote_state_unverified"
+    ],
+    "error": false
+  },
+  {
+    "name": "pr-repository-other/repo",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [
+        {
+          "repository": "other/repo",
+          "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+          "url": "https://github.com/artemgetmann/wacli/pull/123",
+          "remote_verified": true,
+          "state": "open",
+          "draft": true,
+          "owned": true
+        }
+      ],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "matching_pr_remote_state_unverified"
+    ],
+    "error": false
+  },
+  {
+    "name": "pr-url-https://example.com/123",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [
+        {
+          "repository": "artemgetmann/wacli",
+          "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+          "url": "https://example.com/123",
+          "remote_verified": true,
+          "state": "open",
+          "draft": true,
+          "owned": true
+        }
+      ],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "matching_pr_remote_state_unverified"
+    ],
+    "error": false
+  },
+  {
+    "name": "verified-open",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "verified",
+      "pr_inventory_complete": true,
+      "existing_prs": [
+        {
+          "repository": "artemgetmann/wacli",
+          "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+          "url": "https://github.com/artemgetmann/wacli/pull/123",
+          "remote_verified": true,
+          "state": "open",
+          "draft": true,
+          "owned": true
+        }
+      ],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "update_existing_draft",
+      "owned_existing_draft"
+    ],
+    "error": false
+  },
+  {
+    "name": "head-final-newline",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "exact_tested_head_required"
+    ],
+    "error": false
+  },
+  {
+    "name": "url-final-newline",
+    "review": {
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "repository": "artemgetmann/wacli",
+      "publication_outcome": "not_attempted",
+      "pr_inventory_complete": true,
+      "existing_prs": [
+        {
+          "repository": "artemgetmann/wacli",
+          "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+          "url": "https://github.com/artemgetmann/wacli/pull/123\n",
+          "remote_verified": true,
+          "state": "open",
+          "draft": true,
+          "owned": true
+        }
+      ],
+      "concrete_change": true,
+      "missing_from_fork": true,
+      "isolated_tests_passed": true,
+      "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "test_evidence": [
+        "synthetic baseline fails; candidate passes"
+      ],
+      "risks": "Synthetic fixture only.",
+      "rollout": "No live rollout authorized."
+    },
+    "expected": [
+      "hold",
+      "matching_pr_remote_state_unverified"
+    ],
+    "error": false
+  }
+]
