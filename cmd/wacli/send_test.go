@@ -3,6 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -312,69 +317,6 @@ func TestResolveRecipientPickSelectsCandidate(t *testing.T) {
 	}
 }
 
-func TestResolveReplySenderFromStore(t *testing.T) {
-	db := openSendTestDB(t)
-	chat := types.JID{User: "12345", Server: types.GroupServer}
-	sender := "15551234567@s.whatsapp.net"
-
-	if err := db.UpsertChat(chat.String(), "group", "Group", time.Now()); err != nil {
-		t.Fatalf("UpsertChat: %v", err)
-	}
-	if err := db.UpsertMessage(store.UpsertMessageParams{
-		ChatJID:   chat.String(),
-		MsgID:     "quoted",
-		SenderJID: sender,
-		Timestamp: time.Now(),
-		Text:      "hello",
-	}); err != nil {
-		t.Fatalf("UpsertMessage: %v", err)
-	}
-
-	got, err := resolveReplySender(db, chat, "quoted", "")
-	if err != nil {
-		t.Fatalf("resolveReplySender: %v", err)
-	}
-	if got.String() != sender {
-		t.Fatalf("sender = %q, want %q", got.String(), sender)
-	}
-}
-
-func TestResolveReplySenderOverride(t *testing.T) {
-	db := openSendTestDB(t)
-	chat := types.JID{User: "12345", Server: types.GroupServer}
-
-	got, err := resolveReplySender(db, chat, "missing", "+15551234567")
-	if err != nil {
-		t.Fatalf("resolveReplySender: %v", err)
-	}
-	if got.String() != "15551234567@s.whatsapp.net" {
-		t.Fatalf("sender = %q", got.String())
-	}
-}
-
-func TestResolveReplySenderRequiresGroupSenderWhenMissing(t *testing.T) {
-	db := openSendTestDB(t)
-	chat := types.JID{User: "12345", Server: types.GroupServer}
-
-	_, err := resolveReplySender(db, chat, "missing", "")
-	if err == nil || !strings.Contains(err.Error(), "--reply-to-sender is required") {
-		t.Fatalf("expected group sender error, got %v", err)
-	}
-}
-
-func TestResolveReplySenderAllowsDirectMessageWithoutSender(t *testing.T) {
-	db := openSendTestDB(t)
-	chat := types.JID{User: "15551234567", Server: types.DefaultUserServer}
-
-	got, err := resolveReplySender(db, chat, "missing", "")
-	if err != nil {
-		t.Fatalf("resolveReplySender: %v", err)
-	}
-	if !got.IsEmpty() {
-		t.Fatalf("expected empty sender for direct reply, got %q", got.String())
-	}
-}
-
 func TestUpsertSentReactionStoresDisplayText(t *testing.T) {
 	db := openSendTestDB(t)
 	chat := types.JID{User: "15551234567", Server: types.DefaultUserServer}
@@ -393,7 +335,8 @@ func TestUpsertSentReactionStoresDisplayText(t *testing.T) {
 		t.Fatalf("UpsertMessage target: %v", err)
 	}
 
-	upsertSentReaction(db, chat, "Alice", "react1", "target", "👍", now)
+	resolver := fakeTextResolver{}
+	upsertSentReaction(context.Background(), db, resolver, chat, "react1", "target", "👍", now)
 
 	msg, err := db.GetMessage(chat.String(), "react1")
 	if err != nil {
@@ -410,27 +353,38 @@ func TestUpsertSentReactionStoresDisplayText(t *testing.T) {
 	}
 }
 
-func TestBuildReplyContextInfo(t *testing.T) {
+func TestUpsertSentReactionCanonicalizesLIDChat(t *testing.T) {
 	db := openSendTestDB(t)
-	chat := types.JID{User: "12345", Server: types.GroupServer}
+	pn := types.NewJID("15551234567", types.DefaultUserServer)
+	lid := types.NewJID("20001", types.HiddenUserServer)
+	now := time.Date(2026, 5, 5, 6, 30, 0, 0, time.UTC)
+	resolver := outboundTextResolverStub{lid: lid, pn: pn}
 
-	got, err := buildReplyContextInfo(db, chat, "quoted", "+15551234567")
-	if err != nil {
-		t.Fatalf("buildReplyContextInfo: %v", err)
+	if err := db.UpsertChat(pn.String(), "dm", "Me", now); err != nil {
+		t.Fatalf("UpsertChat: %v", err)
 	}
-	if got.GetStanzaID() != "quoted" {
-		t.Fatalf("stanza ID = %q, want quoted", got.GetStanzaID())
-	}
-	if got.GetParticipant() != "15551234567@s.whatsapp.net" {
-		t.Fatalf("participant = %q", got.GetParticipant())
+	if err := db.UpsertMessage(store.UpsertMessageParams{
+		ChatJID:   pn.String(),
+		MsgID:     "target",
+		Timestamp: now.Add(-time.Second),
+		FromMe:    true,
+		Text:      "self target",
+	}); err != nil {
+		t.Fatalf("UpsertMessage target: %v", err)
 	}
 
-	got, err = buildReplyContextInfo(db, chat, "", "+15551234567")
-	if err != nil {
-		t.Fatalf("empty buildReplyContextInfo: %v", err)
+	if err := upsertSentReaction(context.Background(), db, resolver, lid, "react1", "target", "🌺", now); err != nil {
+		t.Fatalf("upsertSentReaction: %v", err)
 	}
-	if got != nil {
-		t.Fatalf("empty reply context = %v, want nil", got)
+	msg, err := db.GetMessage(pn.String(), "react1")
+	if err != nil {
+		t.Fatalf("GetMessage canonical reaction: %v", err)
+	}
+	if msg.ChatJID != pn.String() || msg.DisplayText != "Reacted 🌺 to self target" {
+		t.Fatalf("reaction chat/display = %q/%q", msg.ChatJID, msg.DisplayText)
+	}
+	if _, err := db.GetMessage(lid.String(), "react1"); err == nil {
+		t.Fatal("reaction was also stored under the LID chat")
 	}
 }
 
@@ -873,13 +827,7 @@ func TestDecodeMessageEscapesRejectsUnknownEscape(t *testing.T) {
 }
 
 func TestBuildTextMessageUsesPlainConversationWithoutReplyOrPreview(t *testing.T) {
-	db := openSendTestDB(t)
-	chat := types.JID{User: "15551234567", Server: types.DefaultUserServer}
-
-	msg, plain, err := buildTextMessageWithSelf(db, chat, types.EmptyJID, "hello", "", "", "", nil, nil)
-	if err != nil {
-		t.Fatalf("buildTextMessage: %v", err)
-	}
+	msg, plain := buildTextMessage("hello", nil, nil, nil)
 	if !plain {
 		t.Fatalf("plain = false, want true")
 	}
@@ -889,14 +837,9 @@ func TestBuildTextMessageUsesPlainConversationWithoutReplyOrPreview(t *testing.T
 }
 
 func TestBuildTextMessageAttachesMentions(t *testing.T) {
-	db := openSendTestDB(t)
-	chat := types.JID{User: "12345", Server: types.GroupServer}
 	mentions := []string{"15551234567@s.whatsapp.net", "15557654321@s.whatsapp.net"}
 
-	msg, plain, err := buildTextMessageWithSelf(db, chat, types.EmptyJID, "hey @15551234567", "", "", "", nil, mentions)
-	if err != nil {
-		t.Fatalf("buildTextMessage: %v", err)
-	}
+	msg, plain := buildTextMessage("hey @15551234567", nil, nil, mentions)
 	if plain {
 		t.Fatalf("plain = true, want false")
 	}
@@ -911,7 +854,12 @@ func TestBuildTextMessageAttachesMentions(t *testing.T) {
 }
 
 func TestSendTextMessageKeepsPlainTextFastPathWithoutEphemeral(t *testing.T) {
-	db := openSendTestDB(t)
+	dir := t.TempDir()
+	db, err := store.Open(filepath.Join(dir, "wacli.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
 	chat := types.JID{User: "15551234567", Server: types.DefaultUserServer}
 	sender := &recordingTextSender{}
 
@@ -928,6 +876,68 @@ func TestSendTextMessageKeepsPlainTextFastPathWithoutEphemeral(t *testing.T) {
 	if sender.textRecipient != chat || sender.text != "hello" {
 		t.Fatalf("plain send = (%s, %q), want (%s, hello)", sender.textRecipient, sender.text, chat)
 	}
+	// Exercise the same successful-send persistence path as `send text`, then
+	// observe its journal and message state through real read-only subprocesses.
+	if err = persistOutboundTextWith(context.Background(), db, fakeTextResolver{}, chat, string(id), "hello", time.Unix(1700000000, 0)); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "wacli")
+	buildArgs := []string{"build", "-o", bin}
+	mode := "plain"
+	if db.HasFTS() {
+		buildArgs = append(buildArgs, "-tags", "sqlite_fts5")
+		mode = "fts"
+	}
+	buildArgs = append(buildArgs, "./cmd/wacli")
+	build := exec.Command("go", buildArgs...)
+	build.Dir = "../.."
+	if b, e := build.CombinedOutput(); e != nil {
+		t.Fatalf("build: %v %s", e, b)
+	}
+	var artifact bytes.Buffer
+	for _, args := range [][]string{{"messages", "changes", "--since", "beginning"}, {"messages", "show", "--chat", chat.String(), "--id", string(id)}} {
+		argv := append([]string{"--store", dir, "--read-only", "--json"}, args...)
+		c := exec.Command(bin, argv...)
+		b, e := c.CombinedOutput()
+		fmt.Fprintf(&artifact, "command: %q\nstdout: %s\nexit: %v\n", argv, b, e)
+		if e != nil {
+			t.Fatalf("read: %s %v", b, e)
+		}
+		var envelope struct {
+			Success bool            `json:"success"`
+			Data    json.RawMessage `json:"data"`
+		}
+		if e = json.Unmarshal(b, &envelope); e != nil || !envelope.Success {
+			t.Fatalf("JSON: %s %v", b, e)
+		}
+		if args[1] == "changes" {
+			var page store.ChangesPage
+			if e = json.Unmarshal(envelope.Data, &page); e != nil {
+				t.Fatal(e)
+			}
+			if len(page.Changes) != 1 || page.Changes[0].Operation != "upsert" || page.Changes[0].MsgID != string(id) || page.Changes[0].ChatJID != chat.String() {
+				t.Fatalf("outgoing change: %+v", page)
+			}
+		} else {
+			var msg store.Message
+			if e = json.Unmarshal(envelope.Data, &msg); e != nil {
+				t.Fatal(e)
+			}
+			if msg.Text != "hello" || !msg.FromMe {
+				t.Fatalf("outgoing state: %+v", msg)
+			}
+		}
+	}
+	artifactDir := os.Getenv("WACLI_RETRIEVAL_ARTIFACTS")
+	if artifactDir != "" {
+		if err = os.MkdirAll(artifactDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(filepath.Join(artifactDir, "local-send-"+mode+".log"), artifact.Bytes(), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 }
 
 func TestSendTextMessageUsesDefaultEphemeralExpirationForPrivateEphemeralWithoutDuration(t *testing.T) {
@@ -1099,10 +1109,11 @@ func TestBuildTextMessageCombinesReplyAndMentions(t *testing.T) {
 		t.Fatalf("UpsertMessage: %v", err)
 	}
 
-	msg, plain, err := buildTextMessageWithSelf(db, chat, types.EmptyJID, "replying @15551234567", "quoted", "+15557654321", "", nil, []string{"15551234567@s.whatsapp.net"})
+	reply, err := buildReplyContextInfo(context.Background(), &recordingTextSender{}, db, chat, "quoted", "+15557654321")
 	if err != nil {
-		t.Fatalf("buildTextMessage: %v", err)
+		t.Fatalf("buildReplyContextInfo: %v", err)
 	}
+	msg, plain := buildTextMessage("replying @15551234567", reply, nil, []string{"15551234567@s.whatsapp.net"})
 	if plain {
 		t.Fatalf("plain = true, want false")
 	}
@@ -1122,8 +1133,6 @@ func TestBuildTextMessageCombinesReplyAndMentions(t *testing.T) {
 }
 
 func TestBuildTextMessageAttachesLinkPreview(t *testing.T) {
-	db := openSendTestDB(t)
-	chat := types.JID{User: "15551234567", Server: types.DefaultUserServer}
 	preview := &linkpreview.Preview{
 		URL:         "https://example.com/post",
 		Title:       "Example",
@@ -1131,10 +1140,7 @@ func TestBuildTextMessageAttachesLinkPreview(t *testing.T) {
 		Thumbnail:   []byte("jpeg"),
 	}
 
-	msg, plain, err := buildTextMessageWithSelf(db, chat, types.EmptyJID, "see https://example.com/post", "", "", "", preview, nil)
-	if err != nil {
-		t.Fatalf("buildTextMessage: %v", err)
-	}
+	msg, plain := buildTextMessage("see https://example.com/post", nil, preview, nil)
 	if plain {
 		t.Fatalf("plain = true, want false")
 	}

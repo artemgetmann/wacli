@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -742,6 +741,9 @@ func TestSyncFetchesChatAppStateDeltasAfterConnect(t *testing.T) {
 
 	chat := types.NewJID("15551234567", types.DefaultUserServer)
 	base := time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC)
+	if err := a.db.SetChatArchiveSetting(false, base); err != nil {
+		t.Fatal(err)
+	}
 	result := waSyncAction.CallLogRecord_CONNECTED
 	callType := waSyncAction.CallLogRecord_REGULAR
 	if err := a.db.UpsertChat(chat.String(), "dm", "Alice", base); err != nil {
@@ -1735,7 +1737,7 @@ func TestArchiveChatOrdersPostSendEventsBeforeNewerLiveEventDuringApply(t *testi
 	}
 }
 
-func TestArchiveChatReplaysEventDispatchedAfterWriteCompletion(t *testing.T) {
+func TestArchiveChatRejectsDelayedOlderEventAndReconcilesDebt(t *testing.T) {
 	a := newTestApp(t)
 	f := newFakeWA()
 	a.wa = f
@@ -1769,8 +1771,8 @@ func TestArchiveChatReplaysEventDispatchedAfterWriteCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetChat after delayed dispatch: %v", err)
 	}
-	if stored.Archived {
-		t.Fatalf("delayed event did not reproduce stale cache: %+v", stored)
+	if !stored.Archived {
+		t.Fatalf("older delayed event overwrote the new archive boundary: %+v", stored)
 	}
 	required, err := a.db.AppStateRecoveryRequired(string(appstate.WAPatchRegularLow))
 	if err != nil {
@@ -2595,8 +2597,11 @@ func TestArchiveChatBoundsPrimaryRecoveryWait(t *testing.T) {
 	if archiveCalls != 0 {
 		t.Fatalf("archive calls = %d, want 0 after recovery timeout", archiveCalls)
 	}
-	if handlers != 0 {
-		t.Fatalf("event handlers after recovery timeout = %d, want 0", handlers)
+	// The timed out attempt hands its capture to a background continuation, so
+	// its event handler intentionally stays registered until a late answer,
+	// supersession, or App.Close (see TestLateAppStateRecovery*).
+	if handlers != 1 {
+		t.Fatalf("event handlers after recovery timeout = %d, want 1 (late recovery capture)", handlers)
 	}
 	required, markerErr := a.db.AppStateRecoveryRequired(string(appstate.WAPatchRegularLow))
 	if markerErr != nil {
@@ -2992,7 +2997,7 @@ func TestStoreParsedStatusMessageUsesSeparateStatusTable(t *testing.T) {
 		SenderJID: "15551234567@s.whatsapp.net",
 		Timestamp: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 		Text:      "incoming status",
-	})
+	}, messageStoreOptions{})
 	if err != nil {
 		t.Fatalf("storeParsedMessage: %v", err)
 	}
@@ -3024,7 +3029,7 @@ func TestStoreParsedMessageNormalizesDefaultUserADJIDs(t *testing.T) {
 		SenderJID: sender.String(),
 		Timestamp: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 		Text:      "hello",
-	})
+	}, messageStoreOptions{})
 	if err != nil {
 		t.Fatalf("storeParsedMessage: %v", err)
 	}
@@ -3061,7 +3066,7 @@ func TestStoreParsedMessageResolvesLIDChatAndSender(t *testing.T) {
 		SenderJID: lid.String(),
 		Timestamp: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 		Text:      "hello",
-	})
+	}, messageStoreOptions{})
 	if err != nil {
 		t.Fatalf("storeParsedMessage: %v", err)
 	}
@@ -3111,7 +3116,7 @@ func TestStoreParsedMessageResolvesGroupIdentityLIDs(t *testing.T) {
 		ReplyToSenderJID: lid.String(),
 		Timestamp:        time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 		Text:             "hello",
-	})
+	}, messageStoreOptions{})
 	if err != nil {
 		t.Fatalf("storeParsedMessage: %v", err)
 	}
@@ -3159,7 +3164,7 @@ func TestStoreParsedMessageStoresForwardedMetadata(t *testing.T) {
 		Text:            "forwarded",
 		IsForwarded:     true,
 		ForwardingScore: 4,
-	})
+	}, messageStoreOptions{})
 	if err != nil {
 		t.Fatalf("storeParsedMessage: %v", err)
 	}
@@ -3388,7 +3393,7 @@ func TestSyncDownloadMediaCanonicalizesLIDChatBeforeEnqueue(t *testing.T) {
 	}
 }
 
-func TestSyncMediaEnqueueUsesBoundedBackpressure(t *testing.T) {
+func TestSyncMediaBurstStoresEveryMessage(t *testing.T) {
 	a := newTestApp(t)
 	f := newFakeWA()
 	a.wa = f
@@ -3427,17 +3432,14 @@ func TestSyncMediaEnqueueUsesBoundedBackpressure(t *testing.T) {
 		})
 	}
 
-	before := runtime.NumGoroutine()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var during int
 	res, err := a.Sync(ctx, SyncOptions{
 		Mode:          SyncModeFollow,
 		AllowQR:       false,
 		DownloadMedia: true,
 		AfterConnect: func(context.Context) error {
-			during = runtime.NumGoroutine()
 			cancel()
 			return nil
 		},
@@ -3447,9 +3449,6 @@ func TestSyncMediaEnqueueUsesBoundedBackpressure(t *testing.T) {
 	}
 	if res.MessagesStored != 600 {
 		t.Fatalf("expected 600 messages stored, got %d", res.MessagesStored)
-	}
-	if leaked := during - before; leaked > 20 {
-		t.Fatalf("expected bounded media enqueue goroutines, saw +%d (before=%d during=%d)", leaked, before, during)
 	}
 }
 

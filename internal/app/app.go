@@ -13,6 +13,7 @@ import (
 	"github.com/openclaw/wacli/internal/store"
 	"github.com/openclaw/wacli/internal/wa"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/appstate"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -97,6 +98,8 @@ type WAClient interface {
 	FetchAppState(ctx context.Context, name string, fullSync, onlyIfNotSynced bool) error
 	FetchAppStateEvents(ctx context.Context, name string, fullSync, onlyIfNotSynced bool) ([]any, error)
 	RequestAppStateRecovery(ctx context.Context, name string) (types.MessageID, error)
+	HasLocalAppState(ctx context.Context, name string) (bool, error)
+	ContactJournal() *wa.ContactStoreJournal
 	Logout(ctx context.Context) error
 	LinkedJID() string
 	LinkedLID() string
@@ -105,6 +108,7 @@ type WAClient interface {
 	GetProfilePictureInfo(ctx context.Context, jid types.JID, preview bool, existingID string) (*types.ProfilePictureInfo, error)
 	SetStatusMessage(ctx context.Context, msg string) error
 	SetProfileName(ctx context.Context, name string) error
+	SendAppStatePatch(ctx context.Context, patch appstate.PatchInfo, beforeApply func()) ([]any, error)
 	GetBusinessProfile(ctx context.Context, jid types.JID) (*types.BusinessProfile, error)
 }
 
@@ -130,14 +134,35 @@ type App struct {
 	status                  *syncStatus
 	chatStateSync           chan struct{}
 	appStatePersist         appStatePersistenceSequencer
+	archiveObservationMu    sync.Mutex
+	archiveObserved         map[string]int64
+	archiveSettingObserved  *events.UnarchiveChatsSetting
 	appStateRecoveryWorkers sync.WaitGroup
 	appStateRecoveryMu      sync.Mutex
 	appStateRecoveryClosing bool
-	manualFetchMu           sync.Mutex
-	manualFetches           map[string]int
-	heartbeatLast           atomic.Int64
-	groupInfo               groupInfoCache
-	presenceWatch           presenceWatch
+	// Background continuations of recovery attempts the primary answered late,
+	// at most one per collection. Guarded by appStateRecoveryMu.
+	lateRecoveries   map[string]*lateAppStateRecovery
+	lateRecoveryStop chan struct{}
+	manualFetchMu    sync.Mutex
+	manualFetches    map[string]int
+	// contactDrainMu serializes drains of the contact store journal from
+	// snapshot to acknowledgement, and guards contactDebts: the write-ahead
+	// intents of this process's contact saves, each settled by the first
+	// drain that mirrors the journal through the writes of its send.
+	contactDrainMu sync.Mutex
+	contactDebts   []contactDebt
+	// Degraded app-state mode: collections whose last full sync is known not
+	// to verify (mirrored durably in wacli.db and rehydrated once per
+	// process), and the time of the last background recovery request per
+	// collection. Guarded by appStateDegradedMu.
+	appStateDegradedMu        sync.Mutex
+	appStateFullSyncLoaded    bool
+	appStateFullSyncBroken    map[string]bool
+	appStateRecoveryRequested map[string]time.Time
+	heartbeatLast             atomic.Int64
+	groupInfo                 groupInfoCache
+	presenceWatch             presenceWatch
 }
 
 func New(opts Options) (*App, error) {
@@ -198,6 +223,10 @@ func (a *App) OpenWA() error {
 func (a *App) Close() {
 	a.appStateRecoveryMu.Lock()
 	a.appStateRecoveryClosing = true
+	if a.lateRecoveryStop != nil {
+		close(a.lateRecoveryStop)
+		a.lateRecoveryStop = nil
+	}
 	a.appStateRecoveryMu.Unlock()
 	a.waMu.Lock()
 	waClient := a.wa

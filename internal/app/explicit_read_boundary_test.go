@@ -96,6 +96,35 @@ func TestExplicitReadBoundaryPreservesNewerSameSecondMessages(t *testing.T) {
 	}
 }
 
+func TestExplicitReadBoundarySelfOnlyPreservesMarker(t *testing.T) {
+	a := newTestApp(t)
+	f := newFakeWA()
+	a.wa = f
+	chat, _ := seedExplicitReadBoundary(t, a, false)
+	if err := a.db.SetChatUnreadCount(chat.String(), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.db.SetChatUnread(chat.String(), true); err != nil {
+		t.Fatal(err)
+	}
+	n, kind, err := a.MarkChatReadSelfThrough(context.Background(), chat, "handled")
+	if err != nil || n != 0 || kind != "" || len(f.readSelfCalls) != 0 || len(f.readReceiptCalls) != 0 || len(f.appStateFetches) != 0 {
+		t.Fatalf("partial marker-only read must send nothing: %d %q %v", n, kind, err)
+	}
+	c, err := a.db.GetChat(chat.String())
+	if err != nil || !c.Unread || c.UnreadCount != 0 {
+		t.Fatalf("self-only lost newer marker: %+v %v", c, err)
+	}
+	n, kind, err = a.MarkChatReadSelfThrough(context.Background(), chat, "newer")
+	if err != nil || n != 3 || kind != types.ReceiptTypeReadSelf || len(f.readSelfCalls) != 1 {
+		t.Fatalf("latest handled boundary must still dispatch: %d %q %v", n, kind, err)
+	}
+	c, err = a.db.GetChat(chat.String())
+	if err != nil || c.Unread {
+		t.Fatalf("completed self-only boundary kept marker: %+v %v", c, err)
+	}
+}
+
 func TestExplicitReadBoundaryRejectsInvalidAnchorsBeforeUpdates(t *testing.T) {
 	for _, receipts := range []bool{false, true} {
 		a := newTestApp(t)
@@ -222,35 +251,6 @@ func TestExplicitReadBoundaryGroupPatchUsesAnchorSender(t *testing.T) {
 	}
 	if len(f.markReadCalls) != 1 || f.markReadCalls[0].lastMsgKey.GetParticipant() != "222@s.whatsapp.net" || f.markReadCalls[0].lastMsgKey.GetFromMe() {
 		t.Fatalf("wrong group anchor key: %+v", f.markReadCalls)
-	}
-}
-
-func TestExplicitReadBoundarySelfOnlyPreservesMarker(t *testing.T) {
-	a := newTestApp(t)
-	f := newFakeWA()
-	a.wa = f
-	chat, _ := seedExplicitReadBoundary(t, a, false)
-	if err := a.db.SetChatUnreadCount(chat.String(), 0); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.db.SetChatUnread(chat.String(), true); err != nil {
-		t.Fatal(err)
-	}
-	n, kind, err := a.MarkChatReadSelfThrough(context.Background(), chat, "handled")
-	if err != nil || n != 0 || kind != "" || len(f.readSelfCalls) != 0 || len(f.readReceiptCalls) != 0 || len(f.appStateFetches) != 0 {
-		t.Fatalf("partial marker-only read must send nothing: %d %q %v", n, kind, err)
-	}
-	c, err := a.db.GetChat(chat.String())
-	if err != nil || !c.Unread || c.UnreadCount != 0 {
-		t.Fatalf("self-only lost newer marker: %+v %v", c, err)
-	}
-	n, kind, err = a.MarkChatReadSelfThrough(context.Background(), chat, "newer")
-	if err != nil || n != 3 || kind != types.ReceiptTypeReadSelf || len(f.readSelfCalls) != 1 {
-		t.Fatalf("latest handled boundary must still dispatch: %d %q %v", n, kind, err)
-	}
-	c, err = a.db.GetChat(chat.String())
-	if err != nil || c.Unread {
-		t.Fatalf("completed self-only boundary kept marker: %+v %v", c, err)
 	}
 }
 

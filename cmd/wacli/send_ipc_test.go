@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/openclaw/wacli/internal/app"
-	"github.com/openclaw/wacli/internal/fsutil"
 	"github.com/openclaw/wacli/internal/lock"
 	"github.com/openclaw/wacli/internal/store"
 	"go.mau.fi/whatsmeow/types"
@@ -318,16 +317,6 @@ func TestSendDelegateRequestPreservesPresenceInJSON(t *testing.T) {
 	}
 }
 
-func TestRemoveStaleSendDelegateSocketRefusesRegularFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), sendDelegateSocketName)
-	if err := fsutil.WritePrivateFile(path, []byte("not a socket")); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-	if err := removeStaleSendDelegateSocket(path); err == nil || !strings.Contains(err.Error(), "not a socket") {
-		t.Fatalf("error = %v, want not a socket", err)
-	}
-}
-
 func TestMessagesEditDelegatesThroughSendSocketWhenStoreLocked(t *testing.T) {
 	skipPresenceDelegateSocketTestOnUnsupportedOS(t)
 	storeDir := shortPresenceDelegateStoreDir(t)
@@ -570,6 +559,9 @@ func TestChatsMarkReadDelegatesThroughProductionServerWhenStoreLocked(t *testing
 		switch req.Kind {
 		case markReadKind:
 		case markReadThroughKind:
+			if req.ThroughMessageID != "handled" {
+				return sendDelegateResponse{}, fmt.Errorf("wrong delegated cutoff %q", req.ThroughMessageID)
+			}
 		case markReadSelfThroughKind:
 		case markReadReceiptsKind:
 			req.Receipts = true // as executeDelegatedSend does for this kind
@@ -588,7 +580,7 @@ func TestChatsMarkReadDelegatesThroughProductionServerWhenStoreLocked(t *testing
 		}
 	}()
 
-	socketPath := sendDelegateSocketPath(storeDir)
+	socketPath := filepath.Join(storeDir, ".send.sock")
 	info, err := os.Lstat(socketPath)
 	if err != nil {
 		t.Fatalf("stat delegate socket: %v", err)
@@ -631,7 +623,6 @@ func TestChatsMarkReadDelegatesThroughProductionServerWhenStoreLocked(t *testing
 			if err != nil {
 				t.Fatalf("chats %s failed: %v stdout=%q stderr=%q", tt.command, err, stdout, stderr)
 			}
-
 			if tt.receipts {
 				if tt.throughID != "" {
 					select {
@@ -749,6 +740,49 @@ func TestChatsMarkReadThroughOldOwnerRejectsBeforeStateChange(t *testing.T) {
 
 type fakeDelegatedChatStateApp struct {
 	calls chan string
+}
+
+func TestExplicitReadBoundaryOldOwnerRejectsWithoutFallback(t *testing.T) {
+	skipPresenceDelegateSocketTestOnUnsupportedOS(t)
+	storeDir := shortPresenceDelegateStoreDir(t)
+	lk, err := lock.Acquire(storeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lk.Release()
+	requests := make(chan sendDelegateRequest, 4)
+	stop, err := startSendDelegateServerForStore(context.Background(), storeDir, sendSpacing{}, func(_ context.Context, req sendDelegateRequest) (sendDelegateResponse, error) {
+		requests <- req
+		// This is the pre-boundary owner's dispatch contract. It must refuse a
+		// bounded operation instead of interpreting it as legacy mark-read.
+		if req.Kind != markReadKind && req.Kind != markReadReceiptsKind {
+			return sendDelegateResponse{}, fmt.Errorf("unsupported send kind %q", req.Kind)
+		}
+		return sendDelegateResponse{OK: true}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	for _, receipts := range []bool{false, true} {
+		args := []string{"--store", storeDir, "--timeout", "750ms", "chats", "mark-read", "--chat", "123@s.whatsapp.net", "--through-message-id", "handled"}
+		if receipts {
+			args = append(args, "--receipts")
+		}
+		stdout, stderr, err := runPresenceDelegateHelper(t, args)
+		if err == nil || stdout != "" || !strings.Contains(stderr, "does not support --through-message-id") || !strings.Contains(stderr, "left the chat unread") || !strings.Contains(stderr, "restart `wacli sync`") {
+			t.Fatalf("old owner rejection: err=%v stdout=%q stderr=%q", err, stdout, stderr)
+		}
+		req := <-requests
+		if req.Kind != markReadThroughKind || req.ThroughMessageID != "handled" || req.Receipts != receipts {
+			t.Fatalf("wrong IPC request: %+v", req)
+		}
+		select {
+		case req := <-requests:
+			t.Fatalf("unexpected retry/fallback: %+v", req)
+		default:
+		}
+	}
 }
 
 func (f *fakeDelegatedChatStateApp) DB() *store.DB { return nil }

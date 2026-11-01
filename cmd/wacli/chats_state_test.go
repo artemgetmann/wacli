@@ -112,6 +112,48 @@ func TestExecuteDelegatedReadSelfThroughUsesPrivateFixedBoundary(t *testing.T) {
 	}
 }
 
+func TestChatsMarkReadExplicitBoundaryFlag(t *testing.T) {
+	flags := &rootFlags{}
+	if newChatsMarkReadCmd(flags, true).Flags().Lookup("through-message-id") == nil {
+		t.Fatal("mark-read has no explicit inbound boundary flag")
+	}
+	if newChatsMarkReadCmd(flags, false).Flags().Lookup("through-message-id") != nil {
+		t.Fatal("mark-unread must not accept an explicit read boundary")
+	}
+}
+
+func TestExplicitReadBoundaryRequestValidation(t *testing.T) {
+	for _, receipts := range []bool{false, true} {
+		if got := markReadDelegateKind(receipts, "handled"); got != markReadThroughKind {
+			t.Fatalf("bounded kind = %q", got)
+		}
+	}
+	for _, id := range []string{"", " ", " handled", "handled "} {
+		var err error
+		captureRootStderr(t, func() {
+			err = execute([]string{"--store", t.TempDir(), "chats", "mark-read", "--chat", "123@s.whatsapp.net", "--through-message-id", id})
+		})
+		if err == nil || !strings.Contains(err.Error(), "requires an exact nonempty message ID") {
+			t.Fatalf("ID %q: %v", id, err)
+		}
+	}
+	fake := &orderedMarkReadApp{}
+	unread := false
+	for _, req := range []sendDelegateRequest{
+		{Kind: markReadThroughKind},
+		{Kind: markReadThroughKind, ThroughMessageID: "handled", Read: &unread},
+		{Kind: markReadKind, ThroughMessageID: "handled"},
+		{Kind: markReadReceiptsKind, ThroughMessageID: "handled", Receipts: true},
+	} {
+		if _, err := executeDelegatedMarkRead(context.Background(), fake, req); err == nil {
+			t.Fatalf("invalid bounded request accepted: %+v", req)
+		}
+	}
+	if len(fake.steps) != 0 {
+		t.Fatalf("invalid request reached updates: %v", fake.steps)
+	}
+}
+
 type orderedMarkReadApp struct {
 	steps       []string
 	receipts    int
@@ -124,7 +166,7 @@ func (f *orderedMarkReadApp) DB() *store.DB { return nil }
 func (f *orderedMarkReadApp) MarkChatReadWithReceipts(_ context.Context, chat types.JID) (int, types.ReceiptType, error) {
 	f.steps = append(f.steps, "receipts "+chat.String())
 	kind := f.receiptType
-	if kind == "" {
+	if kind == "" && f.receipts > 0 {
 		kind = types.ReceiptType("unknown")
 	}
 	return f.receipts, kind, f.receiptErr
@@ -312,13 +354,52 @@ func TestReceiptJSONReportsUncertainSenderNotification(t *testing.T) {
 	}
 }
 
-func TestReceiptModeHonorsReadOnlyBeforeOpeningStore(t *testing.T) {
-	var commandErr error
-	captureRootStderr(t, func() {
-		commandErr = execute([]string{"--store", t.TempDir(), "--read-only", "--json", "chats", "mark-read", "--chat", "123@s.whatsapp.net", "--receipts"})
+func TestZeroReceiptsReportLocalOnlyWithoutClaimingAcknowledgement(t *testing.T) {
+	fake := &orderedMarkReadApp{}
+	resp, err := executeDelegatedMarkRead(t.Context(), fake, sendDelegateRequest{
+		Kind: markReadReceiptsKind, To: "123@s.whatsapp.net", Receipts: true,
 	})
-	if commandErr == nil || !strings.Contains(commandErr.Error(), "read-only mode") {
-		t.Fatalf("error=%v, want read-only rejection", commandErr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipts, err := delegatedReceipts(resp, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := captureRootStdout(t, func() {
+		if err := writeChatStateResult(&rootFlags{asJSON: true}, resp.Action, resp.Chat, receipts); err != nil {
+			t.Fatal(err)
+		}
+	})
+	var result struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Data["receipts"] != float64(0) || result.Data["local_only"] != true || result.Data["receipt"] != nil || result.Data["sender_notified"] != nil {
+		t.Fatalf("zero-receipt result claims acknowledgement: %s", raw)
+	}
+	text := captureRootStdout(t, func() {
+		if err := writeChatStateResult(&rootFlags{}, resp.Action, resp.Chat, receipts); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(text, "local state only; no messages acknowledged") {
+		t.Fatalf("missing local-only explanation: %s", text)
+	}
+}
+
+func TestReceiptModeHonorsReadOnlyBeforeOpeningStore(t *testing.T) {
+	for _, extra := range [][]string{{"--receipts"}, {"--through-message-id", "handled"}, {"--through-message-id", "handled", "--receipts"}} {
+		var commandErr error
+		captureRootStderr(t, func() {
+			args := []string{"--store", t.TempDir(), "--read-only", "--json", "chats", "mark-read", "--chat", "123@s.whatsapp.net"}
+			commandErr = execute(append(args, extra...))
+		})
+		if commandErr == nil || !strings.Contains(commandErr.Error(), "read-only mode") {
+			t.Fatalf("flags=%v error=%v, want read-only rejection", extra, commandErr)
+		}
 	}
 }
 

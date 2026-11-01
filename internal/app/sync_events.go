@@ -77,6 +77,9 @@ func (a *App) addSyncEventHandler(ctx context.Context, opts SyncOptions, message
 		// process. Include event type, stack trace, and a running counter.
 		defer func() {
 			if r := recover(); r != nil {
+				if limits != nil {
+					limits.persistenceFailed.Store(true)
+				}
 				n := panicCount.Add(1)
 				if a.eventsEnabled() {
 					a.emitEvent("event_handler_panic", map[string]any{
@@ -107,9 +110,20 @@ func (a *App) addSyncEventHandler(ctx context.Context, opts SyncOptions, message
 			lastEvent.Store(nowUTC().UnixNano())
 			a.handleLiveCallEvent(ctx, v)
 		case *events.AppState, *events.Star, *events.DeleteForMe,
-			*events.Archive, *events.Pin, *events.Mute, *events.MarkChatAsRead:
+			*events.Archive, *events.UnarchiveChatsSetting, *events.Pin, *events.Mute, *events.MarkChatAsRead,
+			*events.Contact:
 			lastEvent.Store(nowUTC().UnixNano())
-			a.handleAppStatePersistenceEvent(ctx, v, nil)
+			if limits != nil {
+				limits.appStatePending.Add(1)
+			}
+			a.handleAppStatePersistenceEvent(ctx, v, func(err error) {
+				if limits != nil {
+					if err != nil {
+						limits.persistenceFailed.Store(true)
+					}
+					limits.appStatePending.Add(-1)
+				}
+			})
 		case *events.HistorySync:
 			lastEvent.Store(nowUTC().UnixNano())
 			a.handleHistorySync(ctx, opts, v, messagesStored, lastEvent, enqueueMedia, limits)
@@ -120,7 +134,9 @@ func (a *App) addSyncEventHandler(ctx context.Context, opts SyncOptions, message
 		case *events.Receipt:
 			lastEvent.Store(nowUTC().UnixNano())
 			a.handleReceiptPersistenceEvent(ctx, v)
-			a.handleOutgoingReceiptEvent(ctx, v)
+			if err := a.handleOutgoingReceiptEvent(ctx, v); err != nil && limits != nil {
+				limits.persistenceFailed.Store(true)
+			}
 			if opts.WebhookEvents.Enabled(SyncWebhookEventReceipt) {
 				if job, ok := newSyncWebhookReceiptEvent(v); ok {
 					enqueueWebhook(job)
@@ -180,6 +196,11 @@ func (a *App) addSyncEventHandler(ctx context.Context, opts SyncOptions, message
 				"app_data_changes": v.AppDataChanges,
 			}, "\nReplaying offline backlog: %d message(s), %d event(s) total.\n", v.Messages, v.Total)
 		case *events.OfflineSyncCompleted:
+			if ctx.Err() == nil && limits.canRecordFreshness() && a.wa.IsConnected() && a.wa.IsAuthed() {
+				if err := a.db.RecordSuccessfulSync(nowUTC()); err != nil {
+					a.emitWarning("sync_state_write_failed", fmt.Sprintf("record successful sync: %v", err), nil)
+				}
+			}
 			a.emitOrPrint("offline_sync_completed", map[string]any{
 				"count": v.Count,
 			}, "\nOffline backlog replayed (%d event(s)).\n", v.Count)
@@ -286,10 +307,14 @@ func syncActivityEvent(evt any) bool {
 	}
 }
 
-func (a *App) handleAppStatePersistenceEvent(ctx context.Context, evt any, tracker *appStatePersistenceTracker) {
-	if tracker != nil {
-		a.persistAppStateEvent(ctx, evt, tracker)
-		return
+// onPersisted runs at the ordered write boundary, including when this event
+// was queued behind startup replay. Sync uses it to track freshness safely.
+func (a *App) handleAppStatePersistenceEvent(ctx context.Context, evt any, onPersisted func(error)) {
+	a.observeArchiveEvent(ctx, evt, false)
+	report := func(err error) {
+		if onPersisted != nil {
+			onPersisted(err)
+		}
 	}
 	ticket := a.appStatePersist.reserveLive()
 	markers, markerErr := a.markLiveAppStateRecovery(evt)
@@ -300,7 +325,7 @@ func (a *App) handleAppStatePersistenceEvent(ctx context.Context, evt any, track
 			map[string]any{"error": markerErr.Error()},
 		)
 		persistCtx := context.WithoutCancel(ctx)
-		a.persistAppStateEvent(persistCtx, evt, nil)
+		firstErr := a.persistAppStateEvent(persistCtx, evt, nil)
 		retryMarkers, retryErr := a.markLiveAppStateRecovery(evt)
 		if retryErr != nil {
 			a.emitWarning(
@@ -311,6 +336,7 @@ func (a *App) handleAppStatePersistenceEvent(ctx context.Context, evt any, track
 		}
 		a.appStatePersist.completeOne(ticket, func() {
 			orderedErr := a.persistAppStateEvent(persistCtx, evt, nil)
+			report(errors.Join(markerErr, firstErr, retryErr, orderedErr))
 			if orderedErr == nil {
 				a.clearLiveAppStateRecovery(retryMarkers)
 			} else if retryErr != nil {
@@ -331,6 +357,7 @@ func (a *App) handleAppStatePersistenceEvent(ctx context.Context, evt any, track
 		if persistenceErr == nil {
 			a.clearLiveAppStateRecovery(markers)
 		}
+		report(persistenceErr)
 	})
 }
 
@@ -377,21 +404,28 @@ func (a *App) persistAppStateEvent(ctx context.Context, evt any, tracker *appSta
 		err = a.handleStarEvent(ctx, v)
 	case *events.DeleteForMe:
 		err = a.handleDeleteForMeEvent(ctx, v)
-	case *events.Archive, *events.Pin, *events.Mute, *events.MarkChatAsRead:
+	case *events.Archive, *events.UnarchiveChatsSetting, *events.Pin, *events.Mute, *events.MarkChatAsRead:
 		err = a.handleChatStateEvent(ctx, v)
+	case *events.Contact:
+		err = a.handleContactEvent(ctx, v)
 	}
 	if tracker != nil {
 		tracker.record(err)
+	}
+	if err == nil {
+		a.observeArchiveEvent(ctx, evt, true)
 	}
 	return err
 }
 
 func appStateCollectionsForEvent(evt any) []appstate.WAPatchName {
 	switch v := evt.(type) {
-	case *events.Archive, *events.Pin, *events.MarkChatAsRead:
+	case *events.Archive, *events.UnarchiveChatsSetting, *events.Pin, *events.MarkChatAsRead:
 		return []appstate.WAPatchName{appstate.WAPatchRegularLow}
 	case *events.Mute, *events.Star, *events.DeleteForMe:
 		return []appstate.WAPatchName{appstate.WAPatchRegularHigh}
+	case *events.Contact:
+		return []appstate.WAPatchName{appstate.WAPatchCriticalUnblockLow}
 	case *events.AppState:
 		if v == nil || v.SyncActionValue == nil || (v.GetCallLogAction() == nil && v.GetDeleteIndividualCallLog() == nil) {
 			return nil
@@ -575,6 +609,7 @@ func (a *App) handleLiveSyncMessage(ctx context.Context, opts SyncOptions, v *ev
 	if historySyncNotificationFromMessage(v) != nil {
 		return
 	}
+	observedArchiveMS, observedSettingMS, archiveDisabled := a.observedArchiveBoundary(ctx, v.Info.Chat)
 	var ok bool
 	v, ok = a.decryptSecretEdit(ctx, v)
 	if !ok {
@@ -584,17 +619,42 @@ func (a *App) handleLiveSyncMessage(ctx context.Context, opts SyncOptions, v *ev
 	if pm.ReactionToID != "" && pm.ReactionEmoji == "" && v.Message != nil && v.Message.GetEncReactionMessage() != nil {
 		a.decryptEncryptedReaction(ctx, &pm, v)
 	}
-	// Protocol-only retries can share the decoded message's ID. Keep their
-	// initial diagnostic placeholder, but never replace an already stored
-	// message with it or make a later text retry count as new unread content.
-	if !pm.HasContent() && pm.ID != "" && !pm.Chat.IsEmpty() && pm.Chat != types.StatusBroadcastJID {
+	// Protocol retries can share an ID with decoded content. Preserve useful
+	// payloads so a later retry cannot look like a first unread transition.
+	// An explicit empty edit is a content update, not a protocol retry.
+	if !pm.Edited && !pm.HasContent() && pm.ID != "" && !pm.Chat.IsEmpty() && pm.Chat != types.StatusBroadcastJID {
 		chat := canonicalJIDString(a.canonicalStoreJID(ctx, pm.Chat))
 		if existing, err := a.db.GetMessage(chat, pm.ID); err == nil && !liveUnreadPlaceholder(existing) {
 			return
 		}
 	}
 	incrementUnread := a.shouldIncrementLiveUnread(ctx, pm)
-	if err := a.storeParsedMessageForSync(ctx, pm, limits...); err == nil {
+	storeOptions := messageStoreOptions{archiveIncoming: incrementUnread && !pm.Edited && !archiveDisabled, archiveObservedMS: observedArchiveMS, archiveSettingObservedMS: observedSettingMS}
+	stored := false
+	if storeOptions.archiveIncoming {
+		if ticket, queued := a.appStatePersist.reserveAfterPending(); queued {
+			// Store content synchronously; only reconcile its boundary again
+			// after older fetches have exposed their archive timestamps.
+			defer func() {
+				a.appStatePersist.completeOne(ticket, func() {
+					if !stored {
+						return
+					}
+					chat := canonicalJIDString(a.canonicalStoreJID(context.WithoutCancel(ctx), pm.Chat))
+					if err := a.db.ReconcileChatArchiveIncoming(chat, pm.ID, pm.Timestamp); err != nil {
+						for _, limit := range limits {
+							if limit != nil {
+								limit.persistenceFailed.Store(true)
+							}
+						}
+						a.emitWarning("archive_incoming_reconcile_failed", fmt.Sprintf("warning: failed to reconcile incoming archive state: %v", err), nil)
+					}
+				})
+			}()
+		}
+	}
+	if err := a.storeParsedMessageForSync(ctx, pm, storeOptions, limits...); err == nil {
+		stored = true
 		if incrementUnread {
 			a.incrementLiveUnread(ctx, pm)
 		}
@@ -730,7 +790,7 @@ func (a *App) handleHistorySync(ctx context.Context, opts SyncOptions, v *events
 				pm = normalized
 				pollEvt = evt
 			}
-			if pm.ReactionToID != "" && pm.ReactionEmoji == "" && m.Message.GetMessage().GetEncReactionMessage() != nil {
+			if pm.ReactionToID != "" && pm.ReactionEmoji == "" && unwrapped.Message.GetEncReactionMessage() != nil {
 				evt, err := a.wa.ParseWebMessage(pm.Chat, m.Message)
 				if err != nil {
 					a.emitWarning(
@@ -744,7 +804,7 @@ func (a *App) handleHistorySync(ctx context.Context, opts SyncOptions, v *events
 			}
 			storedPM := pm
 			storedPM.UnhandledPayload = ""
-			if err := a.storeParsedMessageForSync(ctx, storedPM, limits...); err == nil {
+			if err := a.storeParsedMessageForSync(ctx, storedPM, messageStoreOptions{}, limits...); err == nil {
 				unhandledWarnings.observe(a, pm)
 				a.emitSyncProgress(messagesStored.Add(1))
 				if pm.Poll != nil || pm.PollAdd != nil || pm.PollVote != nil {
@@ -823,9 +883,8 @@ func (a *App) shouldIncrementLiveUnread(ctx context.Context, pm wa.ParsedMessage
 	return err == nil && liveUnreadPlaceholder(existing)
 }
 
-// A contentless protocol row never contributed unread content. Its first real
-// payload may do so, but previously read content, edits and deletion tombstones
-// must remain duplicates even when their stored text is empty.
+// Contentless protocol rows never contributed unread content. Edits, deletion
+// tombstones and previously read payloads must remain duplicates even if empty.
 func liveUnreadPlaceholder(m store.Message) bool {
 	return m.DisplayText == "(message)" && strings.TrimSpace(m.Text) == "" &&
 		!m.FromMe && !m.Edited && !m.Revoked && !m.DeletedForMe &&
@@ -868,11 +927,11 @@ func (a *App) emitSyncProgress(total int64) {
 	a.emitOrPrint("progress", map[string]any{"messages_synced": total}, "\rSynced %d messages...", total)
 }
 
-func (a *App) storeParsedMessageForSync(ctx context.Context, pm wa.ParsedMessage, limits ...*syncStorageLimits) error {
+func (a *App) storeParsedMessageForSync(ctx context.Context, pm wa.ParsedMessage, options messageStoreOptions, limits ...*syncStorageLimits) error {
 	if len(limits) > 0 && limits[0] != nil {
-		return limits[0].StoreParsedMessage(ctx, pm)
+		return limits[0].StoreParsedMessage(ctx, pm, options)
 	}
-	return a.storeParsedMessage(ctx, pm)
+	return a.storeParsedMessage(ctx, pm, options)
 }
 
 func (a *App) decryptEncryptedReaction(ctx context.Context, pm *wa.ParsedMessage, msg *events.Message) {

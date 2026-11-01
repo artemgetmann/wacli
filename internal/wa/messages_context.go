@@ -20,6 +20,9 @@ func contextInfoForMessage(m *waProto.Message) *waProto.ContextInfo {
 	if vid := m.GetVideoMessage(); vid != nil {
 		return vid.GetContextInfo()
 	}
+	if ptv := m.GetPtvMessage(); ptv != nil {
+		return ptv.GetContextInfo()
+	}
 	if aud := m.GetAudioMessage(); aud != nil {
 		return aud.GetContextInfo()
 	}
@@ -97,6 +100,9 @@ func displayTextForProto(m *waProto.Message) string {
 		}
 		return "Sent video"
 	}
+	if m.GetPtvMessage() != nil {
+		return "Sent video"
+	}
 	if aud := m.GetAudioMessage(); aud != nil {
 		return "Sent audio"
 	}
@@ -172,4 +178,10 @@ func displayTextForProto(m *waProto.Message) string {
 		return tbr.GetSelectedDisplayText()
 	}
 	return ""
+}
+
+// MessageDisplayText returns the same compact message summary used for quoted
+// context during sync.
+func MessageDisplayText(m *waProto.Message) string {
+	return displayTextForProto(m)
 }

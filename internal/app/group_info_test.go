@@ -50,7 +50,7 @@ func storeGroupText(t *testing.T, ctx context.Context, a *App, id string) {
 		PushName:  "Anna",
 		Timestamp: time.Date(2025, 3, 1, 12, 0, 0, 0, time.UTC),
 		Text:      "hello",
-	}); err != nil {
+	}, messageStoreOptions{}); err != nil {
 		t.Fatalf("storeParsedMessage %s: %v", id, err)
 	}
 }
@@ -303,7 +303,7 @@ func TestGroupSnapshotIsRetriedAfterAFailedWrite(t *testing.T) {
 				PushName:  "Anna",
 				Timestamp: time.Date(2025, 3, 1, 12, 0, 0, 0, time.UTC),
 				Text:      "hello",
-			})
+			}, messageStoreOptions{})
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("storeParsedMessage error = %v, want error %v", err, tc.wantErr)
 			}
@@ -380,7 +380,7 @@ func TestGroupInfoInvalidatedLookupCannotOverwriteNewerSnapshot(t *testing.T) {
 		}
 	})
 	go func() {
-		done <- a.storeParsedMessage(t.Context(), wa.ParsedMessage{Chat: testGroupJID, ID: "old", Timestamp: time.Now(), Text: "old"})
+		done <- a.storeParsedMessage(t.Context(), wa.ParsedMessage{Chat: testGroupJID, ID: "old", Timestamp: time.Now(), Text: "old"}, messageStoreOptions{})
 	}()
 	<-f.ready
 	a.forgetGroupInfo(testGroupJID)

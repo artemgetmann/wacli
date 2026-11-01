@@ -209,72 +209,6 @@ func TestTimestampOnlyReadReceiptKeepsLegacyMarkerClearing(t *testing.T) {
 	}
 }
 
-func TestPrivateReadSelfBoundarySurvivesReceiptEchoAndReopen(t *testing.T) {
-	for _, timing := range []string{"during-dispatch", "after-completion", "after-reopen"} {
-		t.Run(timing, func(t *testing.T) {
-			a := newTestApp(t)
-			f := newFakeWA()
-			a.wa = f
-			chat, at := seedExplicitReadBoundary(t, a, false)
-			// A positive count keeps this on the actual dispatch path. The
-			// marker becomes count-free later, so echoes still exercise replay.
-			if err := a.db.SetChatUnreadCount(chat.String(), 1); err != nil {
-				t.Fatal(err)
-			}
-			if err := a.db.SetChatUnread(chat.String(), true); err != nil {
-				t.Fatal(err)
-			}
-			installBoundaryReplayHandler(t, a, f)
-			receipt := &events.Receipt{MessageSource: types.MessageSource{Chat: chat},
-				Type: types.ReceiptTypeReadSelf, Timestamp: at.Add(time.Hour), MessageIDs: []types.MessageID{"handled"}}
-			markOnly := func() {
-				t.Helper()
-				if err := a.db.SetChatUnreadCount(chat.String(), 0); err != nil {
-					t.Fatal(err)
-				}
-				if err := a.db.SetChatUnread(chat.String(), true); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if timing == "during-dispatch" {
-				f.onReadReceipt = func(int) (types.ReceiptType, error) {
-					markOnly()
-					f.emit(receipt)
-					return types.ReceiptTypeReadSelf, nil
-				}
-			}
-			if n, _, err := a.MarkChatReadSelfThrough(t.Context(), chat, "handled"); err != nil || n != 2 || len(f.readSelfCalls) != 1 {
-				t.Fatalf("expected actual private dispatch: %d %v", n, err)
-			}
-			if timing != "during-dispatch" {
-				markOnly()
-			}
-			if timing == "after-reopen" {
-				dir := a.opts.StoreDir
-				a.Close()
-				reopened, err := New(Options{StoreDir: dir})
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(reopened.Close)
-				a = reopened
-				f = newFakeWA()
-				a.wa = f
-				installBoundaryReplayHandler(t, a, f)
-			}
-			if timing != "during-dispatch" {
-				f.emit(receipt)
-			}
-			assertBoundaryMarker(t, a, chat, true)
-			if err := a.MarkChatRead(t.Context(), chat, true); err != nil {
-				t.Fatal(err)
-			}
-			f.emit(receipt)
-			assertBoundaryMarker(t, a, chat, false)
-		})
-	}
-}
-
 func TestReceiptCompletionMarkerOnlyRace(t *testing.T) {
 	for _, mode := range []struct {
 		name    string
@@ -347,5 +281,71 @@ func TestReceiptCompletionMarkerOnlyRace(t *testing.T) {
 				assertBoundaryMarker(t, a, chat, mode.bounded)
 			})
 		}
+	}
+}
+
+func TestPrivateReadSelfBoundarySurvivesReceiptEchoAndReopen(t *testing.T) {
+	for _, timing := range []string{"during-dispatch", "after-completion", "after-reopen"} {
+		t.Run(timing, func(t *testing.T) {
+			a := newTestApp(t)
+			f := newFakeWA()
+			a.wa = f
+			chat, at := seedExplicitReadBoundary(t, a, false)
+			// A positive count keeps this on the actual dispatch path. The
+			// marker becomes count-free later, so echoes still exercise replay.
+			if err := a.db.SetChatUnreadCount(chat.String(), 1); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.db.SetChatUnread(chat.String(), true); err != nil {
+				t.Fatal(err)
+			}
+			installBoundaryReplayHandler(t, a, f)
+			receipt := &events.Receipt{MessageSource: types.MessageSource{Chat: chat},
+				Type: types.ReceiptTypeReadSelf, Timestamp: at.Add(time.Hour), MessageIDs: []types.MessageID{"handled"}}
+			markOnly := func() {
+				t.Helper()
+				if err := a.db.SetChatUnreadCount(chat.String(), 0); err != nil {
+					t.Fatal(err)
+				}
+				if err := a.db.SetChatUnread(chat.String(), true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if timing == "during-dispatch" {
+				f.onReadReceipt = func(int) (types.ReceiptType, error) {
+					markOnly()
+					f.emit(receipt)
+					return types.ReceiptTypeReadSelf, nil
+				}
+			}
+			if n, _, err := a.MarkChatReadSelfThrough(t.Context(), chat, "handled"); err != nil || n != 2 || len(f.readSelfCalls) != 1 {
+				t.Fatalf("expected actual private dispatch: %d %v", n, err)
+			}
+			if timing != "during-dispatch" {
+				markOnly()
+			}
+			if timing == "after-reopen" {
+				dir := a.opts.StoreDir
+				a.Close()
+				reopened, err := New(Options{StoreDir: dir})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(reopened.Close)
+				a = reopened
+				f = newFakeWA()
+				a.wa = f
+				installBoundaryReplayHandler(t, a, f)
+			}
+			if timing != "during-dispatch" {
+				f.emit(receipt)
+			}
+			assertBoundaryMarker(t, a, chat, true)
+			if err := a.MarkChatRead(t.Context(), chat, true); err != nil {
+				t.Fatal(err)
+			}
+			f.emit(receipt)
+			assertBoundaryMarker(t, a, chat, false)
+		})
 	}
 }

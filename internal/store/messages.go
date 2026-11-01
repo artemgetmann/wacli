@@ -14,36 +14,39 @@ import (
 var ErrMessageNotTombstoned = errors.New("message is not tombstoned")
 
 type UpsertMessageParams struct {
-	ChatJID         string
-	ChatName        string
-	MsgID           string
-	SenderJID       string
-	SenderName      string
-	Timestamp       time.Time
-	FromMe          bool
-	Text            string
-	DisplayText     string
-	QuotedMsgID     string
-	QuotedSenderJID string
-	Buttons         []Button
-	IsForwarded     bool
-	ForwardingScore uint32
-	ReactionToID    string
-	ReactionEmoji   string
-	MediaType       string
-	MediaCaption    string
-	Filename        string
-	MimeType        string
-	DirectPath      string
-	MediaKey        []byte
-	FileSHA256      []byte
-	FileEncSHA256   []byte
-	FileLength      uint64
-	Edited          bool
-	Revoked         bool
-	DeletedForMe    bool
-	DeletedAt       time.Time
-	DeletionReason  string
+	ArchiveIncoming          bool
+	ArchiveObservedMS        int64
+	ArchiveSettingObservedMS int64
+	ChatJID                  string
+	ChatName                 string
+	MsgID                    string
+	SenderJID                string
+	SenderName               string
+	Timestamp                time.Time
+	FromMe                   bool
+	Text                     string
+	DisplayText              string
+	QuotedMsgID              string
+	QuotedSenderJID          string
+	Buttons                  []Button
+	IsForwarded              bool
+	ForwardingScore          uint32
+	ReactionToID             string
+	ReactionEmoji            string
+	MediaType                string
+	MediaCaption             string
+	Filename                 string
+	MimeType                 string
+	DirectPath               string
+	MediaKey                 []byte
+	FileSHA256               []byte
+	FileEncSHA256            []byte
+	FileLength               uint64
+	Edited                   bool
+	Revoked                  bool
+	DeletedForMe             bool
+	DeletedAt                time.Time
+	DeletionReason           string
 }
 
 func (d *DB) messageSelectColumns(snippet string) string {
@@ -98,7 +101,7 @@ func (d *DB) UpsertMessage(p UpsertMessageParams) error {
 	if p.Edited {
 		editedTS = unix(p.Timestamp)
 	}
-	return d.q.UpsertMessage(storeCtx(), storedb.UpsertMessageParams{
+	params := storedb.UpsertMessageParams{
 		ChatJid:    p.ChatJID,
 		ChatName:   nullString(p.ChatName),
 		MsgID:      p.MsgID,
@@ -106,8 +109,8 @@ func (d *DB) UpsertMessage(p UpsertMessageParams) error {
 		SenderName: nullString(p.SenderName),
 		Ts:         unix(p.Timestamp),
 		FromMe:     boolToInt64(p.FromMe),
-		// Message content must retain its exact whitespace. Trimming it makes
-		// a correctly accepted file/stdin payload fail later verification.
+		// Raw message content must match the conversation, including surrounding
+		// whitespace. Keep normalization confined to display fields and names.
 		Text:            nullStringIfEmpty(p.Text),
 		DisplayText:     nullString(p.DisplayText),
 		QuotedMsgID:     nullString(p.QuotedMsgID),
@@ -134,7 +137,24 @@ func (d *DB) UpsertMessage(p UpsertMessageParams) error {
 		Buttons:         buttonsJSON,
 		ChatJid_2:       strings.TrimSpace(p.ChatJID),
 		MsgID_2:         strings.TrimSpace(p.MsgID),
-	})
+	}
+	if !p.ArchiveIncoming {
+		return d.q.UpsertMessage(storeCtx(), params)
+	}
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Decide and write under the writer lock before reading message state.
+	// A deferred read-then-write transaction can fail with SQLITE_BUSY_SNAPSHOT.
+	if err := recordChatArchiveIncoming(tx, p.ChatJID, p.MsgID, p.Timestamp, p.ArchiveObservedMS, p.ArchiveSettingObservedMS, false); err != nil {
+		return err
+	}
+	if err := d.q.WithTx(tx).UpsertMessage(storeCtx(), params); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (d *DB) MarkMessageRevoked(chatJID, msgID string) error {
@@ -366,6 +386,7 @@ func (d *DB) PurgeMessage(chatJID, msgID string) error {
 }
 
 type ListMessagesParams struct {
+	key       *messagePageKey
 	ChatJID   string
 	ChatJIDs  []string
 	SenderJID string
@@ -422,6 +443,14 @@ func (d *DB) ListMessages(p ListMessagesParams) ([]Message, error) {
 func (p ListMessagesParams) messageFilter() (string, []any) {
 	var filter string
 	var args []any
+	if p.key != nil {
+		op := "<"
+		if p.Asc {
+			op = ">"
+		}
+		filter += " AND (m.ts" + op + "? OR (m.ts=? AND m.rowid" + op + "?))"
+		args = append(args, p.key.ts, p.key.ts, p.key.row)
+	}
 	if p.After != nil {
 		filter += " AND m.ts > ?"
 		args = append(args, unix(*p.After))
@@ -592,12 +621,15 @@ func (d *DB) MessageContext(chatJID, msgID string, before, after int) ([]Message
 }
 
 func (d *DB) scanMessages(query string, args ...any) ([]Message, error) {
-	rows, err := d.sql.Query(query, args...)
+	return scanMessagesFrom(d.readQuery(), false, query, args...)
+}
+
+func scanMessagesFrom(db queryRows, ranked bool, query string, args ...any) ([]Message, error) {
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-
 	var out []Message
 	for rows.Next() {
 		var m Message
@@ -615,7 +647,11 @@ func (d *DB) scanMessages(query string, args ...any) ([]Message, error) {
 		var payloadPurgedAt int64
 		var buttonsJSON string
 		var edited int
-		if err := rows.Scan(&m.rowID, &m.ChatJID, &m.ChatName, &m.MsgID, &m.SenderJID, &m.SenderName, &ts, &fromMe, &m.Text, &m.DisplayText, &m.QuotedMsgID, &m.QuotedSenderJID, &forwarded, &forwardingScore, &m.ReactionToID, &m.ReactionEmoji, &m.MediaType, &m.MediaCaption, &m.Filename, &m.MimeType, &m.DirectPath, &m.LocalPath, &downloadedAt, &starred, &starredAt, &revoked, &deletedForMe, &deletedAt, &deletionReason, &payloadPurgedAt, &edited, &buttonsJSON, &m.DeliveredTo, &m.ReadBy, &m.Snippet); err != nil {
+		dest := []any{&m.rowID, &m.ChatJID, &m.ChatName, &m.MsgID, &m.SenderJID, &m.SenderName, &ts, &fromMe, &m.Text, &m.DisplayText, &m.QuotedMsgID, &m.QuotedSenderJID, &forwarded, &forwardingScore, &m.ReactionToID, &m.ReactionEmoji, &m.MediaType, &m.MediaCaption, &m.Filename, &m.MimeType, &m.DirectPath, &m.LocalPath, &downloadedAt, &starred, &starredAt, &revoked, &deletedForMe, &deletedAt, &deletionReason, &payloadPurgedAt, &edited, &buttonsJSON, &m.DeliveredTo, &m.ReadBy, &m.Snippet}
+		if ranked {
+			dest = append(dest, &m.rank)
+		}
+		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
 		m.Timestamp = fromUnix(ts)
