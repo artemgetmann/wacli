@@ -77,12 +77,22 @@ func TestLateAppStateRecoveryPersistsAndClearsMarkers(t *testing.T) {
 		}
 	}
 
+	// Ordinary persistence remains active after the synchronous waiter exits.
+	// Prove that receiving mutations alone does not settle older replay debt.
+	f.AddEventHandler(func(evt any) {
+		if _, ok := evt.(*events.Archive); ok {
+			a.handleAppStatePersistenceEvent(context.Background(), evt, nil)
+		}
+	})
 	runTimedOutRecoveryAttempt(t, a, name)
 
 	// The phone answers late: whatsmeow adopts the snapshot and dispatches its
 	// events followed by the recovery completion sentinel.
 	f.emit(&events.Archive{JID: chat, Action: &waSyncAction.ArchiveChatAction{Archived: proto.Bool(true)}})
 	f.emit(&events.AppStateSyncComplete{Name: appstate.WAPatchRegularLow, Recovery: true})
+	if stored, err := a.db.GetChat(chat.String()); err != nil || !stored.Archived {
+		t.Fatalf("regular handler did not persist the late archive mutation: %+v, %v", stored, err)
+	}
 
 	waitForCondition(t, 5*time.Second, func() bool {
 		stored, err := a.db.GetChat(chat.String())
