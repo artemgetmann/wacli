@@ -39,7 +39,16 @@
  	}
  	if version == 0 {
  		fullSync = true
-@@ -121,23 +134,37 @@
+@@ -91,7 +104,7 @@
+ 	}
+ 	if fullSync {
+ 		cli.Log.Debugf("Full sync of app state %s completed. Current version: %d", name, state.Version)
+-		eventsToDispatch = append(eventsToDispatch, &events.AppStateSyncComplete{Name: name, Version: state.Version})
++		eventsToDispatch = append(eventsToDispatch, &events.AppStateSyncComplete{Name: name, Version: state.Version, CompletedDeliveryIDs: completedAppStateDeliveries(name, eventsToDispatch)})
+ 	} else {
+ 		cli.Log.Debugf("Synced app state %s from version %d to %d", name, version, state.Version)
+ 	}
+@@ -121,26 +134,40 @@
  	}
  	name := appstate.WAPatchName(snapshot.GetCollectionName())
  	version := snapshot.GetVersion().GetVersion()
@@ -77,8 +86,10 @@
  		return true
 -	} else if currentVersion >= version {
 -		cli.Log.Infof("Ignoring app state recovery response for %s as current version %d is newer than or equal to recovery version %d", reqID, currentVersion, snapshot.GetVersion().GetVersion())
--		return true
--	}
++	}()
++	if !ready {
+ 		return true
+ 	}
 -	cli.Log.Debugf("Handling app state recovery response for %s", reqID)
 -	mutations, err := cli.appStateProc.ProcessRecovery(ctx, snapshot)
 -	if err != nil {
@@ -88,11 +99,13 @@
 -	err = cli.collectEventsToDispatch(ctx, name, mutations, true, eventsToDispatchPtr)
 -	if err != nil {
 -		cli.Log.Warnf("Failed to collect app state events for %s: %v", reqID, err)
-+	}()
-+	if !ready {
- 		return true
- 	}
- 	eventsToDispatch = append(eventsToDispatch, &events.AppStateSyncComplete{Name: name, Version: version, Recovery: true})
+-		return true
+-	}
+-	eventsToDispatch = append(eventsToDispatch, &events.AppStateSyncComplete{Name: name, Version: version, Recovery: true})
++	eventsToDispatch = append(eventsToDispatch, &events.AppStateSyncComplete{Name: name, Version: version, Recovery: true, CompletedDeliveryIDs: completedAppStateDeliveries(name, eventsToDispatch)})
+ 	for _, evt := range eventsToDispatch {
+ 		handlerFailed := cli.dispatchEvent(evt)
+ 		if handlerFailed {
 @@ -159,6 +186,11 @@
  	fullSync bool,
  	eventsToDispatch *[]any,
@@ -105,7 +118,7 @@
  	mutations, newState, err := cli.appStateProc.DecodePatches(ctx, patches, state, true)
  	if err != nil {
  		if errors.Is(err, appstate.ErrKeyNotFound) {
-@@ -190,7 +222,7 @@
+@@ -190,11 +222,25 @@
  	}
  	for _, mutation := range mutations {
  		if eventsToDispatch != nil && mutation.Operation == waServerSync.SyncdMutation_SET {
@@ -114,7 +127,25 @@
  		}
  		evt := cli.dispatchAppState(ctx, name, mutation, fullSync)
  		if eventsToDispatch != nil && evt != nil {
-@@ -274,19 +306,19 @@
+ 			*eventsToDispatch = append(*eventsToDispatch, evt)
++		}
++	}
++	if eventsToDispatch != nil {
++		seen := make(map[store.AppStateDeliveryID]bool)
++		var ids []store.AppStateDeliveryID
++		for _, mutation := range mutations {
++			if mutation.DeliveryID != nil && !seen[*mutation.DeliveryID] {
++				id := *mutation.DeliveryID
++				seen[id] = true
++				ids = append(ids, id)
++			}
++		}
++		if len(ids) > 0 {
++			*eventsToDispatch = append(*eventsToDispatch, &events.AppStateDeliveryBatchComplete{Name: name, CompletedDeliveryIDs: ids})
+ 		}
+ 	}
+ 	return nil
+@@ -274,19 +320,19 @@
  				mutedUntil = time.UnixMilli(act.GetMuteEndTimestamp())
  			}
  		}
@@ -137,11 +168,17 @@
  			storeUpdateError = cli.Store.ChatSettings.PutArchived(ctx, jid, act.GetArchived())
  		}
  	case appstate.IndexContact:
-@@ -453,6 +485,18 @@
+@@ -453,6 +499,24 @@
  				Msg("Stored WASA root secrets from app state")
  		}
  	}
 +	switch evt := eventToDispatch.(type) {
++	case *events.Contact:
++		evt.DeliveryID = mutation.DeliveryID
++	case *events.Star:
++		evt.DeliveryID = mutation.DeliveryID
++	case *events.DeleteForMe:
++		evt.DeliveryID = mutation.DeliveryID
 +	case *events.Archive:
 +		evt.DeliveryID = mutation.DeliveryID
 +	case *events.Pin:
@@ -156,7 +193,7 @@
  	if storeUpdateError != nil {
  		cli.Log.Errorf("Failed to update device store after app state mutation: %v", storeUpdateError)
  	}
-@@ -460,6 +504,9 @@
+@@ -460,6 +524,9 @@
  }
  
  func (cli *Client) downloadExternalAppStateBlob(ctx context.Context, ref *waServerSync.ExternalBlobReference) ([]byte, error) {
@@ -166,7 +203,7 @@
  	return cli.Download(ctx, ref)
  }
  
-@@ -471,7 +518,7 @@
+@@ -471,7 +538,7 @@
  	if !snapshot {
  		attrs["version"] = fromVersion
  	}
@@ -175,7 +212,7 @@
  		Namespace: "w:sync:app:state",
  		Type:      "set",
  		To:        types.ServerJID,
-@@ -542,6 +589,13 @@
+@@ -542,6 +609,13 @@
  //
  //	cli.SendAppState(ctx, appstate.BuildMute(targetJID, true, 24 * time.Hour))
  func (cli *Client) SendAppState(ctx context.Context, patch appstate.PatchInfo) error {
@@ -189,7 +226,7 @@
  	return cli.sendAppState(ctx, patch, true)
  }
  
-@@ -549,6 +603,9 @@
+@@ -549,6 +623,9 @@
  	if cli == nil {
  		return ErrClientIsNil
  	}
@@ -199,7 +236,7 @@
  	version, hash, err := cli.Store.AppState.GetAppStateVersion(ctx, string(patch.Type))
  	if err != nil {
  		return err
-@@ -568,7 +625,7 @@
+@@ -568,7 +645,7 @@
  		return err
  	}
  
@@ -208,7 +245,7 @@
  		Namespace: "w:sync:app:state",
  		Type:      iqSet,
  		To:        types.ServerJID,
-@@ -624,10 +681,25 @@
+@@ -624,10 +701,25 @@
  		}
  		return mainErr
  	}
@@ -542,7 +579,7 @@
  		return mutations, fmt.Errorf("failed to reset app state version in database: %w", err)
 --- /dev/null
 +++ b/appstate_delivery.go
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,163 @@
 +// Copyright (c) 2026 The wacli contributors
 +// SPDX-License-Identifier: MPL-2.0
 +package whatsmeow
@@ -555,6 +592,7 @@
 +	"go.mau.fi/whatsmeow/proto/waServerSync"
 +	"go.mau.fi/whatsmeow/store"
 +	"go.mau.fi/whatsmeow/types"
++	"go.mau.fi/whatsmeow/types/events"
 +	"sync"
 +	"time"
 +)
@@ -685,6 +723,26 @@
 +	}
 +}
 +func (l *appStateProducerLock) Unlock() { l.gate <- struct{}{} }
++
++// This consumes only the producer's private constructed event slice, never a
++// global handler capture. A boundary exists only after the whole batch builds.
++func completedAppStateDeliveries(name appstate.WAPatchName, owned []any) []store.AppStateDeliveryID {
++	seen := make(map[store.AppStateDeliveryID]bool)
++	var ids []store.AppStateDeliveryID
++	for _, evt := range owned {
++		batch, ok := evt.(*events.AppStateDeliveryBatchComplete)
++		if !ok || batch == nil || batch.Name != name {
++			continue
++		}
++		for _, id := range batch.CompletedDeliveryIDs {
++			if !seen[id] {
++				seen[id] = true
++				ids = append(ids, id)
++			}
++		}
++	}
++	return ids
++}
 --- /dev/null
 +++ b/appstate_delivery_crash_test.go
 @@ -0,0 +1,136 @@
@@ -823,6 +881,140 @@
 +	_, err = native.StageAppStateDelivery(ctx, transition)
 +	must(err)
 +	t.Fatal("native transaction passed crash barrier")
++}
+--- /dev/null
++++ b/appstate_delivery_interleave_test.go
+@@ -0,0 +1,131 @@
++// Copyright (c) 2026 The wacli contributors
++// SPDX-License-Identifier: MPL-2.0
++package whatsmeow
++
++import (
++	"context"
++	"encoding/json"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"go.mau.fi/whatsmeow/appstate"
++	waBinary "go.mau.fi/whatsmeow/binary"
++	"go.mau.fi/whatsmeow/proto/waE2E"
++	"go.mau.fi/whatsmeow/proto/waServerSync"
++	"go.mau.fi/whatsmeow/proto/waSyncAction"
++	"go.mau.fi/whatsmeow/proto/waSyncdSnapshotRecovery"
++	"go.mau.fi/whatsmeow/store"
++	"go.mau.fi/whatsmeow/types"
++	"go.mau.fi/whatsmeow/types/events"
++	log "go.mau.fi/whatsmeow/util/log"
++	"google.golang.org/protobuf/proto"
++)
++
++func TestRecoveryCompletionOwnsOnlyItsCompleteBatchDuringInterleave(t *testing.T) {
++	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
++	defer cancel()
++	must := func(err error) {
++		t.Helper()
++		if err != nil {
++			t.Fatal(err)
++		}
++	}
++	source := deliveryTestDevice(t, filepath.Join(t.TempDir(), "source.db"))
++	device := deliveryTestDevice(t, filepath.Join(t.TempDir(), "client.db"))
++	cli := NewClient(device, log.Noop)
++	cli.EmitAppStateEventsOnFullSync = true
++	must(cli.SetAppStateDeliveryConsumer(func(context.Context, *store.AppStateDelivery) error { return nil }))
++	col := appstate.WAPatchRegularHigh
++	jid := types.NewJID("456", types.DefaultUserServer)
++	encoded, err := appstate.NewProcessor(source, log.Noop).EncodePatch(ctx, []byte{1}, appstate.HashState{}, appstate.BuildStar(jid, jid, "synthetic-message", false, true))
++	must(err)
++	patch := &waServerSync.SyncdPatch{}
++	must(proto.Unmarshal(encoded, patch))
++	patch.Version = &waServerSync.SyncdVersion{Version: proto.Uint64(1)}
++	mutations, state, err := appstate.NewProcessor(source, log.Noop).DecodePatches(ctx, &appstate.PatchList{Name: col, Patches: []*waServerSync.SyncdPatch{patch}}, appstate.HashState{}, true)
++	must(err)
++	recovery := &waSyncdSnapshotRecovery.SyncdSnapshotRecovery{CollectionName: proto.String(string(col)), Version: &waSyncdSnapshotRecovery.SyncdVersion{Version: proto.Uint64(1)}, CollectionLthash: state.Hash[:]}
++	for _, m := range mutations {
++		index, e := json.Marshal(m.Index)
++		must(e)
++		recovery.MutationRecords = append(recovery.MutationRecords, &waSyncdSnapshotRecovery.SyncdPlainTextRecord{KeyID: m.KeyID, Mac: m.ValueMAC, Value: &waSyncAction.SyncActionData{Index: index, Value: m.Action, Version: proto.Int32(m.Version)}})
++	}
++	raw, err := proto.Marshal(recovery)
++	must(err)
++	interleaved := false
++	var withheld []any
++	var completion *events.AppStateSyncComplete
++	var typedIDs []uint64
++	metadataEscaped := false
++	cli.AddEventHandler(func(evt any) {
++		switch e := evt.(type) {
++		case *events.AppState:
++			if e.DeliveryID == nil || e.DeliveryID.Sequence != 1 || interleaved {
++				return
++			}
++			interleaved = true
++			// A has released the producer lock before invoking arbitrary handlers.
++			// Consume B via the real locked fetch, but dispatch only B's generic event.
++			v, h, err := device.AppState.GetAppStateVersion(ctx, string(col))
++			must(err)
++			encoded, err := appstate.NewProcessor(device, log.Noop).EncodePatch(ctx, []byte{1}, appstate.HashState{Version: v, Hash: h}, appstate.BuildStar(jid, jid, "synthetic-message", false, false))
++			must(err)
++			newer := &waServerSync.SyncdPatch{}
++			must(proto.Unmarshal(encoded, newer))
++			newer.Version = &waServerSync.SyncdVersion{Version: proto.Uint64(v + 1)}
++			encoded, err = proto.Marshal(newer)
++			must(err)
++			cli.appStateQuery = func(context.Context, infoQuery) (*waBinary.Node, error) {
++				return &waBinary.Node{Tag: "iq", Content: []waBinary.Node{{Tag: "sync", Content: []waBinary.Node{{Tag: "collection", Attrs: waBinary.Attrs{"name": string(col)}, Content: []waBinary.Node{{Tag: "patches", Content: []waBinary.Node{{Tag: "patch", Content: encoded}}}}}}}}}, nil
++			}
++			withheld, err = cli.DangerousInternals().FetchAppState(ctx, col, false, false)
++			must(err)
++			found := false
++			for _, candidate := range withheld {
++				if generic, ok := candidate.(*events.AppState); ok {
++					cli.DangerousInternals().DispatchEvent(generic)
++					found = true
++					break
++				}
++			}
++			if !found {
++				t.Fatal("B has no generic event")
++			}
++		case *events.Star:
++			if e.DeliveryID != nil {
++				typedIDs = append(typedIDs, e.DeliveryID.Sequence)
++			}
++		case *events.AppStateDeliveryBatchComplete:
++			metadataEscaped = true
++		case *events.AppStateSyncComplete:
++			if e.Recovery {
++				copy := *e
++				copy.CompletedDeliveryIDs = append([]store.AppStateDeliveryID(nil), e.CompletedDeliveryIDs...)
++				completion = &copy
++			}
++		}
++	})
++	result := []*waE2E.PeerDataOperationRequestResponseMessage_PeerDataOperationResult{{SyncdSnapshotFatalRecoveryResponse: &waE2E.PeerDataOperationRequestResponseMessage_PeerDataOperationResult_SyncDSnapshotFatalRecoveryResponse{CollectionSnapshot: raw}}}
++	if !cli.handleAppStateRecovery(ctx, "synthetic-A", result) {
++		t.Fatal("recovery dispatch failed")
++	}
++	if !interleaved || completion == nil || len(completion.CompletedDeliveryIDs) != 1 || completion.CompletedDeliveryIDs[0].Sequence != 1 {
++		t.Fatalf("A claimed another delivery: %+v", completion)
++	}
++	if len(typedIDs) != 1 || typedIDs[0] != 1 {
++		t.Fatalf("B typed callback was not withheld: %v", typedIDs)
++	}
++	if metadataEscaped {
++		t.Fatal("private completion metadata escaped to global handlers")
++	}
++	version, _, err := device.AppState.GetAppStateVersion(ctx, string(col))
++	must(err)
++	if version != 2 {
++		t.Fatal("B did not consume before A sentinel")
++	}
++	ownedB := completedAppStateDeliveries(col, withheld)
++	if len(ownedB) != 1 || ownedB[0].Sequence != 2 {
++		t.Fatalf("B batch boundary lost identity: %v", ownedB)
++	}
 +}
 --- /dev/null
 +++ b/appstate_delivery_snapshot_test.go
@@ -1427,6 +1619,18 @@
  
  	historySyncNotifications        chan *waE2E.HistorySyncNotification
  	historySyncHandlerStarted       atomic.Bool
+@@ -993,6 +995,11 @@
+ }
+ 
+ func (cli *Client) dispatchEvent(evt any) (handlerFailed bool) {
++	// Construction metadata belongs to private fetched batches, not arbitrary
++	// global handlers. The final sync sentinel carries its exact owned IDs.
++	if _, internal := evt.(*events.AppStateDeliveryBatchComplete); internal {
++		return false
++	}
+ 	cli.eventHandlersLock.RLock()
+ 	defer func() {
+ 		cli.eventHandlersLock.RUnlock()
 --- /dev/null
 +++ b/store/appstate_delivery.go
 @@ -0,0 +1,49 @@
@@ -1701,7 +1905,7 @@
 +);
 --- a/types/events/appstate.go
 +++ b/types/events/appstate.go
-@@ -11,6 +11,7 @@
+@@ -11,13 +11,16 @@
  
  	"go.mau.fi/whatsmeow/appstate"
  	"go.mau.fi/whatsmeow/proto/waSyncAction"
@@ -1709,7 +1913,18 @@
  	"go.mau.fi/whatsmeow/types"
  )
  
-@@ -42,8 +43,10 @@
+ // Contact is emitted when an entry in the user's contact list is modified from another device.
+ type Contact struct {
+-	JID       types.JID // The contact who was modified.
+-	Timestamp time.Time // The time when the modification happened.'
++	// DeliveryID is provenance only; uncovered handlers must still persist this event.
++	DeliveryID *store.AppStateDeliveryID `json:"-"`
++	JID        types.JID                 // The contact who was modified.
++	Timestamp  time.Time                 // The time when the modification happened.'
+ 
+ 	Action       *waSyncAction.ContactAction // The new contact info.
+ 	FromFullSync bool                        // Whether the action is emitted because of a fullSync
+@@ -42,8 +45,10 @@
  
  // Pin is emitted when a chat is pinned or unpinned from another device.
  type Pin struct {
@@ -1722,7 +1937,45 @@
  
  	Action       *waSyncAction.PinAction // Whether the chat is now pinned or not.
  	FromFullSync bool                    // Whether the action is emitted because of a fullSync
-@@ -75,8 +78,10 @@
+@@ -51,11 +56,13 @@
+ 
+ // Star is emitted when a message is starred or unstarred from another device.
+ type Star struct {
+-	ChatJID   types.JID // The chat where the message was pinned.
+-	SenderJID types.JID // In group chats, the user who sent the message (except if the message was sent by the user).
+-	IsFromMe  bool      // Whether the message was sent by the user.
+-	MessageID string    // The message which was starred or unstarred.
+-	Timestamp time.Time // The time when the (un)starring happened.
++	// DeliveryID is provenance only; uncovered handlers must still persist this event.
++	DeliveryID *store.AppStateDeliveryID `json:"-"`
++	ChatJID    types.JID                 // The chat where the message was pinned.
++	SenderJID  types.JID                 // In group chats, the user who sent the message (except if the message was sent by the user).
++	IsFromMe   bool                      // Whether the message was sent by the user.
++	MessageID  string                    // The message which was starred or unstarred.
++	Timestamp  time.Time                 // The time when the (un)starring happened.
+ 
+ 	Action       *waSyncAction.StarAction // Whether the message is now starred or not.
+ 	FromFullSync bool                     // Whether the action is emitted because of a fullSync
+@@ -63,11 +70,13 @@
+ 
+ // DeleteForMe is emitted when a message is deleted (for the current user only) from another device.
+ type DeleteForMe struct {
+-	ChatJID   types.JID // The chat where the message was deleted.
+-	SenderJID types.JID // In group chats, the user who sent the message (except if the message was sent by the user).
+-	IsFromMe  bool      // Whether the message was sent by the user.
+-	MessageID string    // The message which was deleted.
+-	Timestamp time.Time // The time when the deletion happened.
++	// DeliveryID is provenance only; uncovered handlers must still persist this event.
++	DeliveryID *store.AppStateDeliveryID `json:"-"`
++	ChatJID    types.JID                 // The chat where the message was deleted.
++	SenderJID  types.JID                 // In group chats, the user who sent the message (except if the message was sent by the user).
++	IsFromMe   bool                      // Whether the message was sent by the user.
++	MessageID  string                    // The message which was deleted.
++	Timestamp  time.Time                 // The time when the deletion happened.
+ 
+ 	Action       *waSyncAction.DeleteMessageForMeAction // Additional information for the deletion.
+ 	FromFullSync bool                                   // Whether the action is emitted because of a fullSync
+@@ -75,8 +84,10 @@
  
  // Mute is emitted when a chat is muted or unmuted from another device.
  type Mute struct {
@@ -1735,7 +1988,7 @@
  
  	Action       *waSyncAction.MuteAction // The current mute status of the chat.
  	FromFullSync bool                     // Whether the action is emitted because of a fullSync
-@@ -84,8 +89,10 @@
+@@ -84,8 +95,10 @@
  
  // Archive is emitted when a chat is archived or unarchived from another device.
  type Archive struct {
@@ -1748,7 +2001,7 @@
  
  	Action       *waSyncAction.ArchiveChatAction // The current archival status of the chat.
  	FromFullSync bool                            // Whether the action is emitted because of a fullSync
-@@ -93,8 +100,10 @@
+@@ -93,8 +106,10 @@
  
  // MarkChatAsRead is emitted when a whole chat is marked as read or unread from another device.
  type MarkChatAsRead struct {
@@ -1761,7 +2014,7 @@
  
  	Action       *waSyncAction.MarkChatAsReadAction // Whether the chat was marked as read or unread, and info about the most recent messages.
  	FromFullSync bool                               // Whether the action is emitted because of a fullSync
-@@ -130,7 +139,9 @@
+@@ -130,7 +145,9 @@
  
  // UnarchiveChatsSetting is emitted when the user changes the "Keep chats archived" setting from another device.
  type UnarchiveChatsSetting struct {
@@ -1772,7 +2025,7 @@
  
  	Action       *waSyncAction.UnarchiveChatsSetting // The new settings.
  	FromFullSync bool                                // Whether the action is emitted because of a fullSync
-@@ -178,7 +189,9 @@
+@@ -178,15 +195,28 @@
  // AppState is emitted directly for new data received from app state syncing.
  // You should generally use the higher-level events like events.Contact and events.Mute.
  type AppState struct {
@@ -1781,5 +2034,27 @@
 +	DeliveryID *store.AppStateDeliveryID `json:"-"`
 +	Index      []string
  	*waSyncAction.SyncActionValue
++}
++
++// AppStateDeliveryBatchComplete stays in private fetched lists, never global
++// handlers. It is constructed only after an owned mutation
++// batch's emitted callbacks have all been built. It is not a storage receipt.
++type AppStateDeliveryBatchComplete struct {
++	Name                 appstate.WAPatchName
++	CompletedDeliveryIDs []store.AppStateDeliveryID `json:"-"`
  }
  
+ // AppStateSyncComplete is emitted when app state is resynced.
+ type AppStateSyncComplete struct {
+-	Name     appstate.WAPatchName
+-	Version  uint64
+-	Recovery bool
++	// CompletedDeliveryIDs belongs exclusively to this producer operation. Generic
++	// event admission or another interleaved operation never extends this list.
++	CompletedDeliveryIDs []store.AppStateDeliveryID `json:"-"`
++	Name                 appstate.WAPatchName
++	Version              uint64
++	Recovery             bool
+ }
+ 
+ type AppStateSyncError struct {

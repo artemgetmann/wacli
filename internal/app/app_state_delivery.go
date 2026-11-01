@@ -135,20 +135,46 @@ func (a *App) consumeAppStateDelivery(ctx context.Context, d *sdkstore.AppStateD
 	return err
 }
 
+// Completion comes only from the exact SDK-owned producer boundary. Seeing
+// a generic event is not proof that its typed callbacks belong to this response.
 func (a *App) settleFetchedAppStateDeliveryRecovery(ctx context.Context, collection appstate.WAPatchName, evts []any) error {
 	seen := make(map[sdkstore.AppStateDeliveryID]bool)
 	var ids []appstore.DeliveryCheckpoint
 	for _, evt := range evts {
-		generic, ok := evt.(*events.AppState)
-		if !ok || generic == nil || generic.DeliveryID == nil {
+		complete, ok := evt.(*events.AppStateSyncComplete)
+		if !ok || complete == nil || complete.Name != collection {
 			continue
 		}
-		id := *generic.DeliveryID
-		if seen[id] {
-			continue
+		for _, id := range complete.CompletedDeliveryIDs {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, deliveryCheckpoint(id))
+			}
 		}
-		seen[id] = true
-		ids = append(ids, deliveryCheckpoint(id))
 	}
 	return a.db.ClearFetchedDeliveryRecovery(ctx, string(collection), ids)
+}
+
+// eventDeliveryProvenance filters snapshot membership only. It does not fence
+// uncovered live persistence or replace the existing unowned handlers.
+func eventDeliveryProvenance(evt any) *sdkstore.AppStateDeliveryID {
+	switch e := evt.(type) {
+	case *events.AppState:
+		if e != nil {
+			return e.DeliveryID
+		}
+	case *events.Star:
+		if e != nil {
+			return e.DeliveryID
+		}
+	case *events.DeleteForMe:
+		if e != nil {
+			return e.DeliveryID
+		}
+	case *events.Contact:
+		if e != nil {
+			return e.DeliveryID
+		}
+	}
+	return deliveryIDForEvent(evt)
 }

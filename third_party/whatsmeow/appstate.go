@@ -104,7 +104,7 @@ func (cli *Client) fetchAppStateLocked(ctx context.Context, name appstate.WAPatc
 	}
 	if fullSync {
 		cli.Log.Debugf("Full sync of app state %s completed. Current version: %d", name, state.Version)
-		eventsToDispatch = append(eventsToDispatch, &events.AppStateSyncComplete{Name: name, Version: state.Version})
+		eventsToDispatch = append(eventsToDispatch, &events.AppStateSyncComplete{Name: name, Version: state.Version, CompletedDeliveryIDs: completedAppStateDeliveries(name, eventsToDispatch)})
 	} else {
 		cli.Log.Debugf("Synced app state %s from version %d to %d", name, version, state.Version)
 	}
@@ -167,7 +167,7 @@ func (cli *Client) handleAppStateRecovery(
 	if !ready {
 		return true
 	}
-	eventsToDispatch = append(eventsToDispatch, &events.AppStateSyncComplete{Name: name, Version: version, Recovery: true})
+	eventsToDispatch = append(eventsToDispatch, &events.AppStateSyncComplete{Name: name, Version: version, Recovery: true, CompletedDeliveryIDs: completedAppStateDeliveries(name, eventsToDispatch)})
 	for _, evt := range eventsToDispatch {
 		handlerFailed := cli.dispatchEvent(evt)
 		if handlerFailed {
@@ -227,6 +227,20 @@ func (cli *Client) collectEventsToDispatch(
 		evt := cli.dispatchAppState(ctx, name, mutation, fullSync)
 		if eventsToDispatch != nil && evt != nil {
 			*eventsToDispatch = append(*eventsToDispatch, evt)
+		}
+	}
+	if eventsToDispatch != nil {
+		seen := make(map[store.AppStateDeliveryID]bool)
+		var ids []store.AppStateDeliveryID
+		for _, mutation := range mutations {
+			if mutation.DeliveryID != nil && !seen[*mutation.DeliveryID] {
+				id := *mutation.DeliveryID
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+		if len(ids) > 0 {
+			*eventsToDispatch = append(*eventsToDispatch, &events.AppStateDeliveryBatchComplete{Name: name, CompletedDeliveryIDs: ids})
 		}
 	}
 	return nil
@@ -486,6 +500,12 @@ func (cli *Client) dispatchAppState(ctx context.Context, name appstate.WAPatchNa
 		}
 	}
 	switch evt := eventToDispatch.(type) {
+	case *events.Contact:
+		evt.DeliveryID = mutation.DeliveryID
+	case *events.Star:
+		evt.DeliveryID = mutation.DeliveryID
+	case *events.DeleteForMe:
+		evt.DeliveryID = mutation.DeliveryID
 	case *events.Archive:
 		evt.DeliveryID = mutation.DeliveryID
 	case *events.Pin:

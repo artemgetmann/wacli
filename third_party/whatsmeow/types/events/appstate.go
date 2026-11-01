@@ -17,8 +17,10 @@ import (
 
 // Contact is emitted when an entry in the user's contact list is modified from another device.
 type Contact struct {
-	JID       types.JID // The contact who was modified.
-	Timestamp time.Time // The time when the modification happened.'
+	// DeliveryID is provenance only; uncovered handlers must still persist this event.
+	DeliveryID *store.AppStateDeliveryID `json:"-"`
+	JID        types.JID                 // The contact who was modified.
+	Timestamp  time.Time                 // The time when the modification happened.'
 
 	Action       *waSyncAction.ContactAction // The new contact info.
 	FromFullSync bool                        // Whether the action is emitted because of a fullSync
@@ -54,11 +56,13 @@ type Pin struct {
 
 // Star is emitted when a message is starred or unstarred from another device.
 type Star struct {
-	ChatJID   types.JID // The chat where the message was pinned.
-	SenderJID types.JID // In group chats, the user who sent the message (except if the message was sent by the user).
-	IsFromMe  bool      // Whether the message was sent by the user.
-	MessageID string    // The message which was starred or unstarred.
-	Timestamp time.Time // The time when the (un)starring happened.
+	// DeliveryID is provenance only; uncovered handlers must still persist this event.
+	DeliveryID *store.AppStateDeliveryID `json:"-"`
+	ChatJID    types.JID                 // The chat where the message was pinned.
+	SenderJID  types.JID                 // In group chats, the user who sent the message (except if the message was sent by the user).
+	IsFromMe   bool                      // Whether the message was sent by the user.
+	MessageID  string                    // The message which was starred or unstarred.
+	Timestamp  time.Time                 // The time when the (un)starring happened.
 
 	Action       *waSyncAction.StarAction // Whether the message is now starred or not.
 	FromFullSync bool                     // Whether the action is emitted because of a fullSync
@@ -66,11 +70,13 @@ type Star struct {
 
 // DeleteForMe is emitted when a message is deleted (for the current user only) from another device.
 type DeleteForMe struct {
-	ChatJID   types.JID // The chat where the message was deleted.
-	SenderJID types.JID // In group chats, the user who sent the message (except if the message was sent by the user).
-	IsFromMe  bool      // Whether the message was sent by the user.
-	MessageID string    // The message which was deleted.
-	Timestamp time.Time // The time when the deletion happened.
+	// DeliveryID is provenance only; uncovered handlers must still persist this event.
+	DeliveryID *store.AppStateDeliveryID `json:"-"`
+	ChatJID    types.JID                 // The chat where the message was deleted.
+	SenderJID  types.JID                 // In group chats, the user who sent the message (except if the message was sent by the user).
+	IsFromMe   bool                      // Whether the message was sent by the user.
+	MessageID  string                    // The message which was deleted.
+	Timestamp  time.Time                 // The time when the deletion happened.
 
 	Action       *waSyncAction.DeleteMessageForMeAction // Additional information for the deletion.
 	FromFullSync bool                                   // Whether the action is emitted because of a fullSync
@@ -195,11 +201,22 @@ type AppState struct {
 	*waSyncAction.SyncActionValue
 }
 
+// AppStateDeliveryBatchComplete stays in private fetched lists, never global
+// handlers. It is constructed only after an owned mutation
+// batch's emitted callbacks have all been built. It is not a storage receipt.
+type AppStateDeliveryBatchComplete struct {
+	Name                 appstate.WAPatchName
+	CompletedDeliveryIDs []store.AppStateDeliveryID `json:"-"`
+}
+
 // AppStateSyncComplete is emitted when app state is resynced.
 type AppStateSyncComplete struct {
-	Name     appstate.WAPatchName
-	Version  uint64
-	Recovery bool
+	// CompletedDeliveryIDs belongs exclusively to this producer operation. Generic
+	// event admission or another interleaved operation never extends this list.
+	CompletedDeliveryIDs []store.AppStateDeliveryID `json:"-"`
+	Name                 appstate.WAPatchName
+	Version              uint64
+	Recovery             bool
 }
 
 type AppStateSyncError struct {

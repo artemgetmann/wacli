@@ -27,7 +27,7 @@ func TestReviewerPrimaryRecoveryDeliveryDebt(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.emit(&events.AppState{Index: []string{"unknown"}, DeliveryID: &id})
-		f.emit(&events.AppStateSyncComplete{Name: col, Recovery: true})
+		f.emit(&events.AppStateSyncComplete{Name: col, Recovery: true, CompletedDeliveryIDs: []sdkstore.AppStateDeliveryID{id}})
 	}
 	err = a.recoverMismatchingAppState(ctx, col, gen, &appStatePersistenceTracker{}, nil)
 	required, e := a.db.AppStateRecoveryRequired(string(col))
@@ -64,7 +64,7 @@ func TestPrimaryDeliveryRecoveryPreservesConcurrentNewerDebt(t *testing.T) {
 					if newer {
 						must(a.db.ApplyAppStateDelivery(ctx, appstore.DeliveryCheckpoint{Generation: id.Generation, Sequence: 2, Digest: id.Digest[:]}, nil, []string{string(col)}))
 					}
-					f.emit(&events.AppStateSyncComplete{Name: col, Recovery: true})
+					f.emit(&events.AppStateSyncComplete{Name: col, Recovery: true, CompletedDeliveryIDs: []sdkstore.AppStateDeliveryID{id}})
 				}
 				if late {
 					capture := a.newAppStateRecoveryCapture(ctx, col, "late_recovery_complete")

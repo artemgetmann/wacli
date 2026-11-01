@@ -114,3 +114,15 @@ general outgoing-message deduplication proof or deployment acceptance here.
 Final source gates and independent review must be attached to the exact final
 source snapshot. Remove the source carry once a released upstream SDK passes
 these same regressions.
+
+### Recovery completion owns an exact batch
+
+A recovery response now carries only its own completed delivery identities in
+its final sentinel. Generic event admission does not establish completion: a
+newer same-collection producer may dispatch its generic event before an older
+recovery's sentinel while its typed callback is still pending. The App captures
+only typed/generic events belonging to the sentinel's exact identities, persists
+that response, drains contacts, and settles only those identities. A newer
+incomplete delivery retains recovery debt, including after process death.
+Producer callbacks remain outside the producer lock. Private batch-construction
+metadata is suppressed from global handlers; it is not a persistence receipt.

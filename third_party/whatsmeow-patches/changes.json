@@ -1,9 +1,9 @@
 {
-  "patch_sha256": "34d573abbad296e5cf6a2186580baa034d62fd4f56618bea66bcbcd2bc8bd8aa",
+  "patch_sha256": "72ac4449812213d0914a4281cdeba45061d1ed20538fb29e7fc6e63615a79dcb",
   "files": {
     "appstate.go": {
       "before": "78e3e6f785e50762ba6112c1c626e1ba3b53e7a44d007a5b7fb5cc3c972b1893",
-      "after": "464fadf7dff8fe30f90d3b4edd5a089056d37ebb9607886352856fcff99143dd"
+      "after": "2559db8b092e698f88e20e81e24be63919eb482489cc888db851cf81e89a8961"
     },
     "appstate/decode.go": {
       "before": "c78117d56244f4b2e6dc25e34e03110891e718271c6b719407536c47dd3077dd",
@@ -27,11 +27,15 @@
     },
     "appstate_delivery.go": {
       "before": null,
-      "after": "3f3f79f44ef970a45d189a66024a227cea49c5a4a18b5008d5acb6dafda97b0a"
+      "after": "9e93daadcf852424702b01a3b4c3839a244c2b8172c1a60c9054fa33c36151f3"
     },
     "appstate_delivery_crash_test.go": {
       "before": null,
       "after": "7d1f386cef515e8d6d6d1b0becad037a4bdf2cd2a051022e2baee71a90bcdf6a"
+    },
+    "appstate_delivery_interleave_test.go": {
+      "before": null,
+      "after": "e170434e4ad4262049d46ed35fd0aa155e76fde2c3b6bce37ee0f13e94d95a7e"
     },
     "appstate_delivery_snapshot_test.go": {
       "before": null,
@@ -43,7 +47,7 @@
     },
     "client.go": {
       "before": "4ba6b5f8548f9d0bc6ccc15bbdfecd65c615074538256833706b9bfb590bc9ea",
-      "after": "ce87e596d19b1910d12dffea8363c2b0a38f6d7576a87299b42f376f10777c77"
+      "after": "9ed6f4ddccd4836ecf6b86d7eadad2d6db5922f27409e437e3b56c2e2b6ec676"
     },
     "store/appstate_delivery.go": {
       "before": null,
@@ -63,7 +67,7 @@
     },
     "types/events/appstate.go": {
       "before": "facdc2e530e3e147bc1053d6a378aa2bcb7b5dbaac82c0d7831397a4d9b5de5d",
-      "after": "d96cf1df5eaf3305f6a5e61e5db62b62d6266b2d7aea18ab02e4aa57f9e95d08"
+      "after": "2ad88486d4676be32b150fa7155fc3454a3c3689e3d24af9fe1a683be00c7a86"
     }
   }
 }

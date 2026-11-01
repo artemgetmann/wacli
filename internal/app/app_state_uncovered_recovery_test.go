@@ -22,6 +22,7 @@ import (
 	"go.mau.fi/whatsmeow/proto/waSyncAction"
 	sdkstore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	log "go.mau.fi/whatsmeow/util/log"
 	"google.golang.org/protobuf/proto"
 )
@@ -52,6 +53,15 @@ func (f *deliverySnapshotWA) FetchAppStateEvents(ctx context.Context, name strin
 	}
 	var held []any
 	_, err := f.sdk.DangerousInternals().ApplyAppStatePatches(ctx, appstate.WAPatchName(name), appstate.HashState{}, &appstate.PatchList{Name: appstate.WAPatchName(name), Snapshot: f.snapshot}, true, &held)
+	if err == nil {
+		var ids []sdkstore.AppStateDeliveryID
+		for _, evt := range held {
+			if batch, ok := evt.(*events.AppStateDeliveryBatchComplete); ok && batch.Name == appstate.WAPatchName(name) {
+				ids = append(ids, batch.CompletedDeliveryIDs...)
+			}
+		}
+		held = append(held, &events.AppStateSyncComplete{Name: appstate.WAPatchName(name), CompletedDeliveryIDs: ids})
+	}
 	return held, err
 }
 

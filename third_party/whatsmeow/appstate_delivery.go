@@ -10,6 +10,7 @@ import (
 	"go.mau.fi/whatsmeow/proto/waServerSync"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	"sync"
 	"time"
 )
@@ -140,3 +141,23 @@ func (l *appStateProducerLock) Lock(ctx context.Context) error {
 	}
 }
 func (l *appStateProducerLock) Unlock() { l.gate <- struct{}{} }
+
+// This consumes only the producer's private constructed event slice, never a
+// global handler capture. A boundary exists only after the whole batch builds.
+func completedAppStateDeliveries(name appstate.WAPatchName, owned []any) []store.AppStateDeliveryID {
+	seen := make(map[store.AppStateDeliveryID]bool)
+	var ids []store.AppStateDeliveryID
+	for _, evt := range owned {
+		batch, ok := evt.(*events.AppStateDeliveryBatchComplete)
+		if !ok || batch == nil || batch.Name != name {
+			continue
+		}
+		for _, id := range batch.CompletedDeliveryIDs {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
+}

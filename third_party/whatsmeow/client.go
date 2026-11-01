@@ -995,6 +995,11 @@ func (cli *Client) sendNode(ctx context.Context, node waBinary.Node) error {
 }
 
 func (cli *Client) dispatchEvent(evt any) (handlerFailed bool) {
+	// Construction metadata belongs to private fetched batches, not arbitrary
+	// global handlers. The final sync sentinel carries its exact owned IDs.
+	if _, internal := evt.(*events.AppStateDeliveryBatchComplete); internal {
+		return false
+	}
 	cli.eventHandlersLock.RLock()
 	defer func() {
 		cli.eventHandlersLock.RUnlock()

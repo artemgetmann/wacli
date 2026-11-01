@@ -15,6 +15,7 @@ import (
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waSyncAction"
+	sdkstore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
@@ -531,18 +532,26 @@ func (c *appStateRecoveryCapture) handle(evt any) {
 			// Reserve the snapshot's ordered write position here, at the
 			// dispatch boundary. reserve only increments a counter under a
 			// mutex, so whatsmeow's dispatch never blocks on persistence.
+			owned := make(map[sdkstore.AppStateDeliveryID]bool)
+			for _, id := range syncComplete.CompletedDeliveryIDs {
+				owned[id] = true
+			}
+			var batch []any
+			for _, captured := range c.captured {
+				if id := eventDeliveryProvenance(captured); id != nil && !owned[*id] {
+					continue
+				}
+				batch = append(batch, captured)
+			}
+			// Retain an immutable copy of the response's exact completion list.
+			complete := *syncComplete
+			complete.CompletedDeliveryIDs = append([]sdkstore.AppStateDeliveryID(nil), syncComplete.CompletedDeliveryIDs...)
+			batch = append(batch, &complete)
 			c.completed <- appStateRecoveryCompletion{
-				events: append([]any(nil), c.captured...),
+				events: batch,
 				ticket: c.app.appStatePersist.reserve(),
 			}
 		}
-		return
-	}
-	// Delivery-tagged generic events carry correlation even when their action
-	// has a separate typed handler. Settlement below is collection-filtered, so
-	// an unrelated concurrent collection's ID cannot clear this capture's debt.
-	if generic, ok := evt.(*events.AppState); ok && generic != nil && generic.DeliveryID != nil {
-		c.captured = append(c.captured, evt)
 		return
 	}
 	if slices.Contains(appStateCollectionsForEvent(evt), c.collection) {
