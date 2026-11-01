@@ -151,7 +151,7 @@ func (l *whatsmeowLogger) outputf(level, msg string, args ...any) {
 	fmt.Fprintf(l.w, "%s [%s %s] %s\n", time.Now().Format("15:04:05.000"), l.module, level, fmt.Sprintf(msg, args...))
 }
 
-// Match both level and literal template from whatsmeow c386243a72ba. Unknown
+// Match both level and literal template from whatsmeow b2b1e71d45e2. Unknown
 // templates keep the ordinary filter; a dependency update must review this list.
 // ParseRecovery and ProcessRecovery share one template, so unknown errors cannot
 // safely distinguish malformed bytes from an unusable snapshot. Only known key
@@ -180,6 +180,16 @@ func safeAppStateRecoveryDiagnostic(level, msg string, args []any) (string, bool
 		}
 	} else if level == "INFO" && msg == "Ignoring app state recovery response for %s as current version %d is newer than or equal to recovery version %d" {
 		reason = "stale_version"
+	} else if level == "DEBUG" {
+		// Surface only fixed milestones from the pinned SDK. Request IDs,
+		// collection strings and snapshot versions remain unformatted: these
+		// observations prove processing progress without leaking arguments.
+		switch msg {
+		case "Handling app state recovery response for %s":
+			reason = "processing_started"
+		case "Finished handling app state recovery response for %s (%s to v%d)":
+			reason = "processing_completed"
+		}
 	}
 	if reason == "" {
 		return "", false

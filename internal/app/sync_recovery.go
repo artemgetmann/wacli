@@ -121,6 +121,19 @@ func (a *App) warnAppStateRecovery(name string, err error) {
 }
 
 func (a *App) syncAppStateDeltas(ctx context.Context, recoveries *sync.Map) {
+	// Older builds consumed this preference without saving it. Incremental
+	// deltas cannot recover it, so request the existing full-replay path.
+	archiveRecovery, err := a.db.ChatArchiveRecoveryRequired()
+	if err != nil {
+		a.warnAppStateRecovery(string(appstate.WAPatchRegularLow), err)
+		return
+	}
+	if archiveRecovery {
+		if err := a.db.MarkAppStateRecoveryRequired(string(appstate.WAPatchRegularLow)); err != nil {
+			a.warnAppStateRecovery(string(appstate.WAPatchRegularLow), err)
+			return
+		}
+	}
 	pending, err := a.db.AppStateRecoveryCollections()
 	if err != nil {
 		a.emitWarning("app_state_sync_failed", fmt.Sprintf("warning: cannot inspect app state recovery: %v", err),
@@ -129,6 +142,24 @@ func (a *App) syncAppStateDeltas(ctx context.Context, recoveries *sync.Map) {
 	}
 	for _, name := range pending {
 		if _, loaded := recoveries.LoadOrStore(name, struct{}{}); !loaded {
+			collection := appstate.WAPatchName(name)
+			if a.isAppStateFullSyncBroken(collection) {
+				// A snapshot must cover replay debt, even when the preference
+				// was already seen. Never destroy a known-broken collection.
+				generation, _, err := a.db.BeginAppStateRecovery(name)
+				if err != nil {
+					a.warnAppStateRecovery(name, err)
+					continue
+				}
+				a.requestBackgroundAppStateRecovery(ctx, collection, generation)
+				// Keep catching up new mutations while the primary is asleep.
+				// This does not settle the older, still-unseen snapshot debt.
+				fetchErr, persistenceErr := a.fetchAndPersistAppState(ctx, collection, false, &appStatePersistenceTracker{})
+				if err := errors.Join(fetchErr, persistenceErr); err != nil {
+					a.warnAppStateRecovery(name, err)
+				}
+				continue
+			}
 			a.recoverAppStateCollection(ctx, name, recoveries, appStateRecoveryStepTimeout)
 		}
 	}

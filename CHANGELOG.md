@@ -2,6 +2,67 @@
 
 ## Unreleased
 
+- Sync: keep valid delivery/read receipts after malformed entries in the same batch, report invalid input separately from storage failures, and keep incomplete syncs from advancing freshness. Thanks @jesusvillota (#537).
+
+## 0.25.1 - 2026-10-26
+
+**Highlights:** reliable slow file and voice uploads, plus complete decoding of wrapped history and video notes.
+
+- Send: extend the `send file` and `send voice` attempt timeout by one second per 64 KiB, so uploads slower than 45 seconds no longer fail with `send timed out after 45s`. Thanks @ViaxCo (#535, #534).
+
+- Messages: read wrapped history payloads, grouped iPhone contact-card fields, and round video notes with their media and reply context. Thanks @emanuma03-alt (#529).
+
+- Dependencies: update the GraphQL parser after the 48-hour cooldown, preserving Go 1.27.0 and Node 24 minimums.
+
+## 0.25.0 - 2026-10-23
+
+**Highlights:** opt-in file uploads up to 2048 MiB, durable poll vote retractions, and reliable uncached media downloads.
+
+- Send: add `send file --max-size-mb` to raise the 100 MiB upload cap per send, up to 2048 MiB, with bounded validation and forwarding to a running `sync` delegate. Thanks @aleixrodriala (#525).
+- Polls: retain timestamped vote retractions so older live/history replay, restarts, and phone/LID reconciliation cannot restore withdrawn selections. Thanks @shaun0927 (#516).
+- Media: close the read-only cache database before opening a writer so uncached downloads work with WAL sidecars and no running sync. Thanks @stijnhoste (#524).
+- Dependencies: refresh SQL parser and Google API/RPC modules after the 48-hour cooldown, retaining Go 1.27.0 and Node 24 minimums.
+
+## 0.24.0 - 2026-10-21
+
+- Send: quote file, voice, and sticker replies with stored text or media content, resolve phone/LID identities, and reject missing or unusable direct-chat quote targets before upload. Thanks @larskluge (#506).
+- Send: use bounded high-resolution link-preview thumbnails by default; set `WACLI_LINKPREVIEW_SMALL=1` to restore inline-only thumbnails and the 300 KiB download cap. Thanks @samuba (#510).
+- Send: report skipped previews and support explicit, strictly validated `WACLI_LINKPREVIEW_ALLOW_CIDRS` exceptions for trusted networks, preserving default SSRF denial and independent webhook permissions. Thanks @samuba (#509).
+- Contacts: add delegated account contact saves and renames with required `--account-wide` consent and separate default-off `--phonebook` permission; mirror applied contact edits in order and retain recovery debt for incomplete batches. Thanks @nicolasbiondic and @muriloprataviera (#505, #500).
+- Send: retain sync-compatible quoted display text and canonical reaction history for direct and delegated sends. Thanks @goutamadwant (#507, #503).
+
+## 0.23.0 - 2026-10-20
+
+- Security: build source, CI, Docker, and release artifacts with Go 1.27.3 to fix GO-2026-6809 while retaining the Go 1.27.0 source minimum.
+
+- Windows: use a current-user-only named pipe for sync delegation, avoiding crashes and restart loops caused by inaccessible AF_UNIX socket files (#511).
+
+- Dependencies: refresh WhatsApp protocol handling, utility and parser modules, SQLite WASM tooling, and pnpm 12.14.0 after the 48-hour cooldown, retaining Go 1.27.0 and Node 24 minimums.
+
+- Dependencies: update x/exp after the 48-hour cooldown while retaining the Go 1.27.0 source minimum and Go 1.27.2 build toolchain.
+- Sync: unarchive chats on eligible incoming messages when Keep chats archived is off, recover missing preferences on upgrade, and preserve newer unarchives across stale archive replays. Thanks @Luizssauro (#466).
+
+- Known issues: back up your archive before upgrading; upgraded stores can repeat archive-state recovery on every sync start, and a failed full replay can discard saved app state (#501).
+
+## 0.22.0 - 2026-10-16
+
+**Highlights:** bounded message search context and cursor reads, a content-free incremental journal, safer sends and chat recovery, and five networking security fixes.
+
+- Messages: add bounded chronological search context and exact local chat/contact name filters with explicit ambiguity errors.
+- Messages: add bounded cursor reads for list, search, and export, with explicit archive invalidation and shared successful-sync freshness.
+- Messages: add a content-free incremental journal, bounded drains, retention expiry, and identity reconciliation.
+- Dependencies: update Go networking, crypto, terminal, protocol and parser modules, pnpm 12.13.0, and the dead-code checker after the 48-hour cooldown; fix five reachable x/net advisories while retaining Go and Node minimums.
+- Chats: add an exact inbound mark-read boundary that preserves newer unread work through receipts, sync echoes, and recovery replay. Thanks @artemgetmann (#488).
+- Chats: let `mark-read --receipts` clear local unread metadata when no eligible incoming message is stored, report the zero-receipt result as local-only, and preserve arrivals during the clear. Thanks @nicolasbiondic (#491).
+- Media: reuse verified cached downloads and add bounded exact phone recovery through the running sync owner. Thanks @artemgetmann (#482).
+- Send: avoid fresh message retries after ambiguous disconnects while retaining safe lookup and presence retries. Thanks @artemgetmann (#483).
+- Send: retain native quote IDs and canonical sender identities in immediate text and attachment history, and save attachments under the canonical recipient. Thanks @artemgetmann (#485, #486).
+- Messages: preserve exact raw text, captions, and edits, including surrounding whitespace. Thanks @artemgetmann (#484).
+- Sync: count the first decoded group payload after a protocol placeholder once and preserve it across empty protocol replays without discarding explicit empty edits. Thanks @artemgetmann (#487).
+- Chats: finish an app-state recovery the primary answers after the waiter timed out, persisting the late snapshot and clearing that attempt's replay markers. Thanks @nicolasbiondic (#489).
+- Chats: on collections whose full sync is known not to verify, let chat-state writes proceed after an incremental sync instead of a failing full replay and a five-minute wait for the phone; only the pre-write attempt marker is cleared, while older recovery intents and each write's post-send intent are kept until a verified full replay or a primary recovery snapshot covers them. Thanks @nicolasbiondic (#490).
+- Release: expose the shared workflow’s nonpublishing dry run for dependency and toolchain verification.
+
 ## 0.21.0 - 2026-10-11
 
 **Highlights:** opt-in full-history pairing, live presence events, media retry filters, and Go standard-library security fixes.

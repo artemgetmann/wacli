@@ -188,7 +188,7 @@ func explainThroughDelegateError(err error, requested bool) error {
 	if err == nil || !requested || !strings.Contains(err.Error(), "unsupported send kind") || !strings.Contains(err.Error(), markReadThroughKind) {
 		return err
 	}
-	return fmt.Errorf("the running sync process does not support --through-message-id and did not mark the chat read; restart `wacli sync` after upgrading, then run this again: %w", err)
+	return fmt.Errorf("the running sync process does not support --through-message-id and left the chat unread; restart `wacli sync` after upgrading, then run this again: %w", err)
 }
 
 // explainReceiptsDelegateError turns that rejection into the action to take.
@@ -231,7 +231,7 @@ func runChatState(flags *rootFlags, opts chatStateOptions, action string, delega
 					return explainThroughDelegateError(delegateErr, true)
 				}
 				if delegate.Kind == markReadSelfThroughKind && strings.Contains(delegateErr.Error(), "unsupported send kind") {
-					return fmt.Errorf("the running sync process does not support --self-only and did not mark the chat read; restart `wacli sync` after upgrading: %w", delegateErr)
+					return fmt.Errorf("the running sync process does not support --self-only and left the chat unread; restart `wacli sync` after upgrading: %w", delegateErr)
 				}
 				return explainReceiptsDelegateError(delegateErr, opts.receipts)
 			}
@@ -312,6 +312,9 @@ func writeChatStateResult(flags *rootFlags, action, chat string, receipts *chatS
 		}
 		if receipts != nil {
 			result["receipts"] = receipts.count
+			if receipts.count == 0 {
+				result["local_only"] = true
+			}
 			if receipts.kind != "" {
 				result["receipt"] = receipts.kind
 				result["sender_notified"] = receipts.senderNotified()
@@ -324,7 +327,9 @@ func writeChatStateResult(flags *rootFlags, action, chat string, receipts *chatS
 		return nil
 	}
 	note := ""
-	if receipts.kind == string(types.ReceiptTypeReadSelf) {
+	if receipts.count == 0 {
+		note = ", local state only; no messages acknowledged"
+	} else if receipts.kind == string(types.ReceiptTypeReadSelf) {
 		note = fmt.Sprintf(", sent as %s: your read-receipt privacy setting keeps them from the sender", receipts.kind)
 		if receipts.selfOnly {
 			note = fmt.Sprintf(", sent as %s: sender not notified", receipts.kind)

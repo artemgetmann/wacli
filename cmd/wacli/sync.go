@@ -93,9 +93,9 @@ func newSyncCmd(flags *rootFlags) *cobra.Command {
 					stopSendDelegate()
 				}
 			}()
-			var afterConnect func(context.Context) error
+			var beforeAppStateSync func(context.Context) error
 			if mode == appPkg.SyncModeFollow {
-				afterConnect = func(ctx context.Context) error {
+				beforeAppStateSync = func(ctx context.Context) error {
 					stop, err := startSendDelegateServer(ctx, a, sendSpacing)
 					if err != nil {
 						return err
@@ -109,7 +109,7 @@ func newSyncCmd(flags *rootFlags) *cobra.Command {
 				Mode:                mode,
 				PresenceMode:        presenceMode,
 				AllowQR:             false,
-				AfterConnect:        afterConnect,
+				BeforeAppStateSync:  beforeAppStateSync,
 				DownloadMedia:       downloadMedia,
 				RefreshContacts:     refreshContacts,
 				RefreshGroups:       refreshGroups,

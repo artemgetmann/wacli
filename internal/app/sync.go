@@ -57,12 +57,17 @@ func (m SyncPresenceMode) SendsAvailablePresence() bool {
 }
 
 type SyncOptions struct {
-	Mode                SyncMode
-	PresenceMode        SyncPresenceMode
-	AllowQR             bool
-	OnQRCode            func(string)
-	PairPhoneNumber     string
-	OnPairCode          func(string)
+	Mode            SyncMode
+	PresenceMode    SyncPresenceMode
+	AllowQR         bool
+	OnQRCode        func(string)
+	PairPhoneNumber string
+	OnPairCode      func(string)
+	// BeforeAppStateSync starts connected services that must remain available
+	// while initial app-state recovery waits for keys. An error aborts bootstrap.
+	BeforeAppStateSync func(context.Context) error
+	// AfterConnect runs after initial app-state sync and optional imports, so
+	// callers can deliver live events without bootstrap consuming their recovery.
 	AfterConnect        func(context.Context) error
 	DownloadMedia       bool
 	RefreshContacts     bool
@@ -206,8 +211,8 @@ func (a *App) Sync(ctx context.Context, opts SyncOptions) (SyncResult, error) {
 	// app-state recovery can wait for missing keys; it must not hide the send
 	// endpoint for that whole wait. State-changing delegated operations already
 	// serialize with recovery in the app; sends and read-self do not need it.
-	if opts.AfterConnect != nil {
-		if err := opts.AfterConnect(syncCtx); err != nil {
+	if opts.BeforeAppStateSync != nil {
+		if err := opts.BeforeAppStateSync(syncCtx); err != nil {
 			return SyncResult{MessagesStored: messagesStored.Load()}, err
 		}
 	}
@@ -241,6 +246,12 @@ func (a *App) Sync(ctx context.Context, opts SyncOptions) (SyncResult, error) {
 			)
 		}
 	}
+	if opts.AfterConnect != nil {
+		if err := opts.AfterConnect(syncCtx); err != nil {
+			return SyncResult{MessagesStored: messagesStored.Load()}, err
+		}
+	}
+
 	var err error
 	if opts.Mode == SyncModeFollow {
 		_, err = a.runSyncFollow(syncCtx, opts.MaxReconnect, opts.PresenceMode, &messagesStored, &connectionEpoch, disconnected, loggedOut, staleReconnect)
@@ -260,6 +271,11 @@ func (a *App) Sync(ctx context.Context, opts SyncOptions) (SyncResult, error) {
 	}
 	if err != nil {
 		return SyncResult{MessagesStored: messagesStored.Load()}, err
+	}
+	if opts.Mode != SyncModeFollow && syncCtx.Err() == nil && limits.canRecordFreshness() && a.wa.IsConnected() && a.wa.IsAuthed() {
+		if err := a.db.RecordSuccessfulSync(nowUTC()); err != nil {
+			return SyncResult{MessagesStored: messagesStored.Load()}, fmt.Errorf("record successful sync: %w", err)
+		}
 	}
 	return SyncResult{MessagesStored: messagesStored.Load()}, nil
 }
@@ -401,7 +417,13 @@ func (a *App) upsertMessageChat(pm wa.ParsedMessage, name string) error {
 	return a.db.UpsertChatMetadata(jid, chatKind(pm.Chat), name)
 }
 
-func (a *App) storeParsedMessage(ctx context.Context, pm wa.ParsedMessage) error {
+type messageStoreOptions struct {
+	archiveIncoming          bool
+	archiveObservedMS        int64
+	archiveSettingObservedMS int64
+}
+
+func (a *App) storeParsedMessage(ctx context.Context, pm wa.ParsedMessage, options messageStoreOptions) error {
 	pm.Chat = a.canonicalStoreJID(ctx, pm.Chat)
 	chatJID := canonicalJIDString(pm.Chat)
 	var chatName string
@@ -503,33 +525,36 @@ func (a *App) storeParsedMessage(ctx context.Context, pm wa.ParsedMessage) error
 	}
 
 	if err := a.db.UpsertMessage(store.UpsertMessageParams{
-		ChatJID:         chatJID,
-		ChatName:        chatName,
-		MsgID:           pm.ID,
-		SenderJID:       senderJID,
-		SenderName:      senderName,
-		Timestamp:       pm.Timestamp,
-		FromMe:          pm.FromMe,
-		Text:            pm.Text,
-		DisplayText:     displayText,
-		QuotedMsgID:     pm.ReplyToID,
-		QuotedSenderJID: a.canonicalStoreJIDString(ctx, pm.ReplyToSenderJID),
-		Buttons:         waButtonsToStore(pm.Buttons),
-		IsForwarded:     pm.IsForwarded,
-		ForwardingScore: pm.ForwardingScore,
-		ReactionToID:    pm.ReactionToID,
-		ReactionEmoji:   pm.ReactionEmoji,
-		MediaType:       mediaType,
-		MediaCaption:    caption,
-		Filename:        filename,
-		MimeType:        mimeType,
-		DirectPath:      directPath,
-		MediaKey:        mediaKey,
-		FileSHA256:      fileSha,
-		FileEncSHA256:   fileEncSha,
-		FileLength:      fileLen,
-		Edited:          pm.Edited,
-		Revoked:         pm.Revoked,
+		ArchiveIncoming:          options.archiveIncoming,
+		ArchiveObservedMS:        options.archiveObservedMS,
+		ArchiveSettingObservedMS: options.archiveSettingObservedMS,
+		ChatJID:                  chatJID,
+		ChatName:                 chatName,
+		MsgID:                    pm.ID,
+		SenderJID:                senderJID,
+		SenderName:               senderName,
+		Timestamp:                pm.Timestamp,
+		FromMe:                   pm.FromMe,
+		Text:                     pm.Text,
+		DisplayText:              displayText,
+		QuotedMsgID:              pm.ReplyToID,
+		QuotedSenderJID:          a.canonicalStoreJIDString(ctx, pm.ReplyToSenderJID),
+		Buttons:                  waButtonsToStore(pm.Buttons),
+		IsForwarded:              pm.IsForwarded,
+		ForwardingScore:          pm.ForwardingScore,
+		ReactionToID:             pm.ReactionToID,
+		ReactionEmoji:            pm.ReactionEmoji,
+		MediaType:                mediaType,
+		MediaCaption:             caption,
+		Filename:                 filename,
+		MimeType:                 mimeType,
+		DirectPath:               directPath,
+		MediaKey:                 mediaKey,
+		FileSHA256:               fileSha,
+		FileEncSHA256:            fileEncSha,
+		FileLength:               fileLen,
+		Edited:                   pm.Edited,
+		Revoked:                  pm.Revoked,
 	}); err != nil {
 		return err
 	}

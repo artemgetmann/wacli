@@ -54,6 +54,8 @@ func TestWhatsmeowRecoveryDiagnosticsRedactArguments(t *testing.T) {
 		{"unavailable-key", "WARN", "Failed to parse app state recovery blob for %s: %v", "snapshot_key_unavailable", []any{hostile, fmt.Errorf("%s: %w", hostile, ErrEmptyAppStateKeyShare)}},
 		{"collect", "WARN", "Failed to collect app state events for %s: %v", "collect_events_failed", []any{hostile, errors.New(hostile)}},
 		{"stale", "INFO", "Ignoring app state recovery response for %s as current version %d is newer than or equal to recovery version %d", "stale_version", []any{hostile, hostile, hostile}},
+		{"processing", "DEBUG", "Handling app state recovery response for %s", "processing_started", []any{hostile}},
+		{"processed", "DEBUG", "Finished handling app state recovery response for %s (%s to v%d)", "processing_completed", []any{hostile, hostile, hostile}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// Sanitization must also hold when the original level is enabled.

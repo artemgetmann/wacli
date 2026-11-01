@@ -49,7 +49,7 @@ func TestLiveSyncCountsSenderKeyPlaceholderUpgradeOnce(t *testing.T) {
 		info := types.MessageInfo{
 			MessageSource: types.MessageSource{Chat: chat, Sender: sender, IsGroup: true},
 			ID:            id,
-			Timestamp:     time.Date(2024, 1, 3, 0, 0, i, 0, time.UTC),
+			Timestamp:     time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC),
 		}
 		key := &events.Message{Info: info, Message: &waE2E.Message{
 			SenderKeyDistributionMessage: &waE2E.SenderKeyDistributionMessage{GroupID: proto.String(chat.String())},
@@ -92,7 +92,7 @@ func TestLiveSyncCountsSenderKeyPlaceholderUpgradeOnce(t *testing.T) {
 		Info: types.MessageInfo{
 			MessageSource: types.MessageSource{Chat: chat, Sender: sender, IsGroup: true},
 			ID:            "group-message-2",
-			Timestamp:     time.Date(2024, 1, 3, 0, 0, 1, 0, time.UTC),
+			Timestamp:     time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC),
 		},
 		Message: &waE2E.Message{Conversation: proto.String("hello")},
 	}, &stored, nil, nil)

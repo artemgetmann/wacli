@@ -76,7 +76,7 @@ func TestUpsertSentReactionSurfacesStoreFailure(t *testing.T) {
 	chat := types.NewJID("15550000001", types.DefaultUserServer)
 	now := time.Now().UTC()
 
-	if err := upsertSentReaction(db, chat, "Chat", "R1", "T1", "👍", now); err != nil {
+	if err := upsertSentReaction(context.Background(), db, fakeTextResolver{}, chat, "R1", "T1", "👍", now); err != nil {
 		t.Fatalf("healthy store: %v", err)
 	}
 	if _, err := db.GetMessage(chat.String(), "R1"); err != nil {
@@ -86,7 +86,7 @@ func TestUpsertSentReactionSurfacesStoreFailure(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
 	}
-	if err := upsertSentReaction(db, chat, "Chat", "R2", "T1", "👍", now); err == nil {
+	if err := upsertSentReaction(context.Background(), db, fakeTextResolver{}, chat, "R2", "T1", "👍", now); err == nil {
 		t.Fatal("expected store error after close")
 	}
 }
