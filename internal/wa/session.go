@@ -55,6 +55,7 @@ func (c *Client) init(ctx context.Context) (err error) {
 	}
 	// FetchAppStateEvents fails closed without this: recovery snapshots must
 	// return every mutation so wacli can rebuild its own database.
+	c.client.SetAppStateDeliveryValidator(c.opts.AppStateValidator)
 	c.client.EmitAppStateEventsOnFullSync = true
 	// Persist recently-sent messages so whatsmeow can answer retry-receipts
 	// across process restarts. Without this, recipients whose Signal session

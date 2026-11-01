@@ -33,7 +33,21 @@ type AppStateTransition struct {
 	AddedMACs                   []AppStateMutationMAC
 }
 
+// AppStateDeliveryBoundary is durable native provenance, including after ACK.
+// Fresh epochs describe a tracking boundary, not prior projection completeness.
+type AppStateDeliveryBoundary struct {
+	Device      string
+	Epoch       string
+	ID          AppStateDeliveryID
+	Predecessor *AppStateDeliveryID
+	Name        string
+	Version     uint64
+	Hash        [128]byte
+	Pending     bool
+}
+
 type AppStateDelivery struct {
+	Boundary   AppStateDeliveryBoundary
 	ID         AppStateDeliveryID
 	Transition AppStateTransition
 }
@@ -43,6 +57,7 @@ type AppStateDelivery struct {
 // device store, and never acknowledge a different generation/sequence/digest.
 // Acknowledgment means consumer checkpoint durability, not a WhatsApp receipt.
 type AppStateDeliveryStore interface {
+	AppStateDeliveryBoundary(context.Context) (*AppStateDeliveryBoundary, error)
 	StageAppStateDelivery(context.Context, AppStateTransition) (*AppStateDelivery, error)
 	PendingAppStateDelivery(context.Context) (*AppStateDelivery, error)
 	AckAppStateDelivery(context.Context, AppStateDeliveryID) error

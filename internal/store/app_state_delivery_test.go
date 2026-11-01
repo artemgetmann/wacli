@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"github.com/mattn/go-sqlite3"
 	"testing"
@@ -176,4 +177,29 @@ func TestAppStateDeliveryCanceledBatchRollsBack(t *testing.T) {
 	_, err = d.sql.Exec("DROP TRIGGER cancel_projection")
 	must(err)
 	must(d.ApplyAppStateDelivery(t.Context(), id, []ChatStateProjection{{Kind: "pin", JID: jid, Enabled: true}}, nil))
+}
+
+func TestBoundDeliveryChecksPredecessorInsideAppTransaction(t *testing.T) {
+	d := openTestDB(t)
+	ctx := t.Context()
+	jid := "456@s.whatsapp.net"
+	if e := d.UpsertChat(jid, "dm", "synthetic", time.Unix(1700000000, 0)); e != nil {
+		t.Fatal(e)
+	}
+	one := DeliveryCheckpoint{Device: "synthetic-device", Generation: "synthetic-generation", Sequence: 1, Digest: bytes.Repeat([]byte{1}, 32)}
+	if e := d.ApplyAppStateDelivery(ctx, one, []ChatStateProjection{{Kind: "pin", JID: jid, Enabled: true}}, nil); e != nil {
+		t.Fatal(e)
+	}
+	two := DeliveryCheckpoint{Device: one.Device, Generation: one.Generation, Sequence: 2, Digest: bytes.Repeat([]byte{2}, 32), Predecessor: &DeliveryCheckpoint{Generation: one.Generation, Sequence: 1, Digest: bytes.Repeat([]byte{9}, 32)}}
+	if e := d.ApplyAppStateDelivery(ctx, two, []ChatStateProjection{{Kind: "pin", JID: jid, Enabled: false}}, nil); e == nil {
+		t.Fatal("wrong predecessor was applied")
+	}
+	chat, e := d.GetChat(jid)
+	if e != nil || !chat.Pinned {
+		t.Fatal("failed predecessor check partially projected")
+	}
+	two.Predecessor = &one
+	if e = d.ApplyAppStateDelivery(ctx, two, []ChatStateProjection{{Kind: "pin", JID: jid, Enabled: false}}, nil); e != nil {
+		t.Fatal(e)
+	}
 }

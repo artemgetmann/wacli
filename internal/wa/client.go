@@ -28,8 +28,9 @@ type Options struct {
 	// InitContext bounds opening/upgrading and is not retained after startup.
 	InitContext context.Context
 	// The application owns durable, account-scoped key recovery metadata.
-	KeyStateStore    AppStateKeyStateStore
-	AppStateConsumer func(context.Context, *wastore.AppStateDelivery) error
+	KeyStateStore     AppStateKeyStateStore
+	AppStateConsumer  func(context.Context, *wastore.AppStateDelivery) error
+	AppStateValidator func(context.Context, *wastore.AppStateDeliveryBoundary) error
 }
 
 type Client struct {

@@ -540,6 +540,9 @@ func (cli *Client) ConnectContext(ctx context.Context) error {
 	if cli == nil {
 		return ErrClientIsNil
 	}
+	if err := cli.DrainAppStateDelivery(ctx); err != nil {
+		return err
+	}
 
 	cli.socketLock.Lock()
 	defer cli.socketLock.Unlock()
@@ -555,6 +558,9 @@ func (cli *Client) ConnectContext(ctx context.Context) error {
 }
 
 func (cli *Client) connect(ctx context.Context) error {
+	if err := cli.DrainAppStateDelivery(ctx); err != nil {
+		return err
+	}
 	cli.socketLock.Lock()
 	defer cli.socketLock.Unlock()
 

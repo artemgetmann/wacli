@@ -51,13 +51,13 @@ func (s *SQLStore) StageAppStateDelivery(ctx context.Context, t store.AppStateTr
 		if err := s.requireDurableAppStateTransaction(ctx); err != nil {
 			return err
 		}
-		_, err := s.db.Exec(ctx, `INSERT INTO whatsmeow_app_state_delivery(jid,generation,sequence) VALUES($1,$2,0) ON CONFLICT(jid) DO NOTHING`, s.JID, hex.EncodeToString(entropy[:]))
+		_, err := s.db.Exec(ctx, `INSERT INTO whatsmeow_app_state_delivery(jid,generation,sequence,epoch_kind) VALUES($1,$2,0,'fresh') ON CONFLICT(jid) DO NOTHING`, s.JID, hex.EncodeToString(entropy[:]))
 		if err != nil {
 			return err
 		}
 		// UPDATE locks the per-device row on both SQLite and PostgreSQL before
 		// observing cursor state. A pending payload prevents any second delivery.
-		err = s.db.QueryRow(ctx, `UPDATE whatsmeow_app_state_delivery SET sequence=sequence+1 WHERE jid=$1 AND payload IS NULL AND sequence<$2 RETURNING generation,sequence`, s.JID, int64(math.MaxInt64)).Scan(&delivery.ID.Generation, &delivery.ID.Sequence)
+		err = s.db.QueryRow(ctx, `UPDATE whatsmeow_app_state_delivery SET predecessor_sequence=CASE WHEN sequence>0 THEN sequence ELSE NULL END,predecessor_digest=CASE WHEN sequence>0 THEN digest ELSE NULL END,sequence=sequence+1 WHERE jid=$1 AND payload IS NULL AND sequence<$2 RETURNING generation,sequence`, s.JID, int64(math.MaxInt64)).Scan(&delivery.ID.Generation, &delivery.ID.Sequence)
 		if errors.Is(err, sql.ErrNoRows) {
 			return store.ErrAppStateDeliveryPending
 		}
@@ -97,6 +97,11 @@ func (s *SQLStore) StageAppStateDelivery(ctx context.Context, t store.AppStateTr
 		return nil, err
 	}
 	delivery.ID.Digest = digest
+	boundary, err := s.AppStateDeliveryBoundary(ctx)
+	if err != nil {
+		return nil, err
+	}
+	delivery.Boundary = *boundary
 	return delivery, nil
 }
 
@@ -119,6 +124,14 @@ func (s *SQLStore) PendingAppStateDelivery(ctx context.Context) (*store.AppState
 	if sha256.Sum256(d.Transition.Payload) != d.ID.Digest {
 		return nil, fmt.Errorf("app state delivery digest mismatch")
 	}
+	boundary, err := s.AppStateDeliveryBoundary(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if boundary.ID != d.ID || !boundary.Pending {
+		return nil, fmt.Errorf("app state pending boundary changed")
+	}
+	d.Boundary = *boundary
 	return d, nil
 }
 
@@ -160,4 +173,64 @@ func (s *SQLStore) requireDurableAppStateTransaction(ctx context.Context) error 
 		}
 	}
 	return nil
+}
+
+func (s *SQLStore) AppStateDeliveryBoundary(ctx context.Context) (*store.AppStateDeliveryBoundary, error) {
+	if _, nested := s.db.Execable(ctx).(dbutil.Transaction); nested {
+		return nil, fmt.Errorf("boundary requires its own committed transaction")
+	}
+	var entropy [16]byte
+	if _, err := rand.Read(entropy[:]); err != nil {
+		return nil, err
+	}
+	if err := s.db.DoTxn(ctx, nil, func(ctx context.Context) error {
+		if err := s.requireDurableAppStateTransaction(ctx); err != nil {
+			return err
+		}
+		_, err := s.db.Exec(ctx, `INSERT INTO whatsmeow_app_state_delivery(jid,generation,sequence,epoch_kind) VALUES($1,$2,0,'fresh') ON CONFLICT(jid) DO NOTHING`, s.JID, hex.EncodeToString(entropy[:]))
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	b := &store.AppStateDeliveryBoundary{Device: s.JID}
+	var name sql.NullString
+	var version, prev sql.NullInt64
+	var hash, digest, pred []byte
+	err := s.db.QueryRow(ctx, `SELECT generation,sequence,epoch_kind,name,after_version,after_hash,digest,payload IS NOT NULL,predecessor_sequence,predecessor_digest FROM whatsmeow_app_state_delivery WHERE jid=$1`, s.JID).Scan(&b.ID.Generation, &b.ID.Sequence, &b.Epoch, &name, &version, &hash, &digest, &b.Pending, &prev, &pred)
+	if err != nil {
+		return nil, err
+	}
+	if b.ID.Generation == "" || (b.Epoch != "fresh" && b.Epoch != "legacy17") {
+		return nil, fmt.Errorf("invalid native app state epoch")
+	}
+	if b.ID.Sequence == 0 {
+		if b.Epoch != "fresh" || name.Valid || version.Valid || len(hash) != 0 || len(digest) != 0 || b.Pending || prev.Valid || len(pred) != 0 {
+			return nil, fmt.Errorf("invalid fresh app state epoch")
+		}
+		return b, nil
+	}
+	if !name.Valid || !version.Valid || version.Int64 < 0 || len(hash) != 128 || len(digest) != 32 {
+		return nil, fmt.Errorf("invalid retained app state boundary")
+	}
+	b.Name = name.String
+	b.Version = uint64(version.Int64)
+	copy(b.Hash[:], hash)
+	copy(b.ID.Digest[:], digest)
+	if prev.Valid || len(pred) != 0 {
+		if !prev.Valid || prev.Int64 <= 0 || uint64(prev.Int64)+1 != b.ID.Sequence || len(pred) != 32 {
+			return nil, fmt.Errorf("invalid predecessor identity")
+		}
+		b.Predecessor = &store.AppStateDeliveryID{Generation: b.ID.Generation, Sequence: uint64(prev.Int64)}
+		copy(b.Predecessor.Digest[:], pred)
+	} else if b.ID.Sequence > 1 && b.Epoch != "legacy17" {
+		return nil, fmt.Errorf("missing native predecessor identity")
+	}
+	v, h, err := s.GetAppStateVersion(ctx, b.Name)
+	if err != nil {
+		return nil, err
+	}
+	if v != b.Version || h != b.Hash {
+		return nil, fmt.Errorf("app state boundary cursor/hash mismatch; preserve matching stores")
+	}
+	return b, nil
 }

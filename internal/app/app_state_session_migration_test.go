@@ -54,7 +54,7 @@ func TestSessionDeliveryMigrationPreservesVersion16Cursor(t *testing.T) {
 	defer raw.Close()
 	var schema, compat int
 	must(raw.QueryRow("SELECT version,compat FROM whatsmeow_version").Scan(&schema, &compat))
-	if schema != 17 || compat < 17 {
+	if schema != 18 || compat < 18 {
 		t.Fatalf("old SDK compatibility was not fenced: schema=%d compat=%d", schema, compat)
 	}
 }

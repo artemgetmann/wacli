@@ -9,7 +9,7 @@ release. No private module, absolute dependency path or module-cache edit is use
 
 `upstream.json` pins the source URL, module checksum and every pristine file hash.
 `changes.json` lists all changed SDK files and pins the patch hash. The patch
-contains the native one-slot delivery transaction/schema, verified producer
+contains the native one-slot delivery transaction/schema (successor compatibility18, atomic predecessor witness), verified producer
 handoff, selective event provenance, cancelable serialized accepted-local path, and isolated
 synthetic tests. The private IQ/blob function seams substitute transport in SDK tests;
 production uses the unchanged normal IQ implementation.
@@ -42,3 +42,10 @@ Remove the source replacement when an upstream SDK release implements this
 contract and passes the same decoder, local-IQ, crash/restart and integration
 regressions. Keep wacli-specific projection SQL and unread policy in wacli. No
 upstream issue, PR or publication is part of this implementation work.
+
+
+The successor exposes retained boundary metadata after acknowledgment and a
+serialized local pairing validator. It preserves legacy17 payloads and refuses
+ambiguous pending predecessors rather than backfilling from the App checkpoint.
+The native compatibility fence rejects older17 writers; returning to them is not
+an automatic rollback. Existing license/source notices remain unchanged.

@@ -69,9 +69,9 @@ patch lists use the same verified replacement boundary. Peer recovery retains
 the upstream current-version freshness check; local delivery IDs do not bypass
 it. Equal/lower versions are meaningful only for an explicit replacement.
 
-App migration 33→34 adds checkpoint/debt-correlation tables without changing
-existing chat state or recovery intents. SDK migration 16→17 preserves existing
-cursor state and fences older SDK schema compatibility. Existing data already
+App migrations 33→35 add checkpoint/debt-correlation tables and device binding without changing
+existing chat state or recovery intents. SDK migrations 16→18 preserve existing
+cursor state, retain predecessor identity and fence schema-17 and older writers. Existing data already
 missed before this upgrade is not reconstructed from cursors; ordinary external
 recovery remains necessary for that historical gap.
 
@@ -126,3 +126,32 @@ that response, drains contacts, and settles only those identities. A newer
 incomplete delivery retains recovery debt, including after process death.
 Producer callbacks remain outside the producer lock. Private batch-construction
 metadata is suppressed from global handlers; it is not a persistence receipt.
+
+
+## Successor pairing admission
+
+The native schema/compatibility is18. Each future stage retains its exact
+predecessor sequence/digest in the same native transaction as current identity,
+payload, cursor/hash/MAC and reset. Generation is shared within an epoch; the
+slot is device-scoped. App schema35 binds checkpoint generations to that device.
+Startup, reconnect and producers use the same cancelable SDK producer gate to
+validate before network, cache writes or consumption. A retained acknowledged
+identity must match the App checkpoint; a pending delivery requires either its
+exact current checkpoint or the independently retained predecessor identity.
+Numeric sequence adjacency alone is insufficient.
+
+A clean schema16 upgrade establishes an explicit fresh tracking epoch; it does
+not prove prior App completeness or clear older recovery debt. Schema17 migration
+preserves existing identities and payloads without inventing predecessors.
+Independently matching legacy acknowledgments/current checkpoints may bind their
+device and retry acknowledgment. A genuinely fresh pending sequence1 is admitted
+only with no App checkpoint history. Other legacy pending pairs with an unknown
+predecessor, wrong epochs/devices/digests, and one-sided acknowledged restores
+are refused with evidence preserved. Use independently verified matching stores
+or a separately validated recovery process; do not reset checkpoints or lower
+compatibility. No general legacy repair, transparent downgrade or authorized
+live database copy is supplied by this successor.
+
+These checks detect the tested identity mismatches, not mutually stale paired
+backups or arbitrary projection corruption with matching metadata. They do not
+reconstruct missing acknowledged payloads, message history or remote receipts.

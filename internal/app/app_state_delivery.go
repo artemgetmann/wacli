@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"time"
@@ -45,6 +46,12 @@ func deliveryIDForEvent(evt any) *sdkstore.AppStateDeliveryID {
 // consumeAppStateDelivery never waits on callback admission or reserved local
 // tasks. The SDK owns serialization and acks only after this checkpoint commits.
 func (a *App) consumeAppStateDelivery(ctx context.Context, d *sdkstore.AppStateDelivery) error {
+	if d.ID != d.Boundary.ID {
+		return fmt.Errorf("app state delivery identity/provenance mismatch")
+	}
+	if err := a.validateAppStateDeliveryBoundary(ctx, &d.Boundary); err != nil {
+		return err
+	}
 	done, err := a.db.HasExactAppStateDeliveryCheckpoint(ctx, deliveryCheckpoint(d.ID))
 	if err != nil {
 		return err
@@ -126,7 +133,7 @@ func (a *App) consumeAppStateDelivery(ctx context.Context, d *sdkstore.AppStateD
 	for _, evt := range observations {
 		a.observeArchiveEvent(ctx, evt, false)
 	}
-	err = a.db.ApplyAppStateDelivery(ctx, deliveryCheckpoint(d.ID), actions, debt)
+	err = a.db.ApplyAppStateDelivery(ctx, checkpointForBoundary(&d.Boundary), actions, debt)
 	if err == nil {
 		for _, evt := range observations {
 			a.observeArchiveEvent(ctx, evt, true)
@@ -177,4 +184,73 @@ func eventDeliveryProvenance(evt any) *sdkstore.AppStateDeliveryID {
 		}
 	}
 	return deliveryIDForEvent(evt)
+}
+
+func checkpointForBoundary(b *sdkstore.AppStateDeliveryBoundary) appstore.DeliveryCheckpoint {
+	cp := deliveryCheckpoint(b.ID)
+	cp.Device = b.Device
+	if b.Predecessor != nil {
+		prev := deliveryCheckpoint(*b.Predecessor)
+		prev.Device = b.Device
+		cp.Predecessor = &prev
+	}
+	return cp
+}
+
+// This validator runs under the SDK producer gate before startup success,
+// covered SDK cache writes, native consumption or acknowledgment.
+func (a *App) validateAppStateDeliveryBoundary(ctx context.Context, b *sdkstore.AppStateDeliveryBoundary) error {
+	checkpoints, err := a.db.AppStateDeliveryCheckpoints(ctx)
+	if err != nil {
+		return err
+	}
+	refuse := func(reason string) error {
+		return fmt.Errorf("app state store pairing refused (%s); pending evidence preserved: use matching stores or independently verified recovery; do not reset checkpoints or downgrade", reason)
+	}
+	if b == nil {
+		if len(checkpoints) == 0 {
+			return nil
+		}
+		return refuse("session/device missing for existing App checkpoints")
+	}
+	if b.Device == "" || b.ID.Generation == "" {
+		return refuse("missing device/epoch")
+	}
+	if b.ID.Sequence == 0 {
+		if b.Epoch == "fresh" && len(checkpoints) == 0 {
+			return nil
+		}
+		return refuse("fresh epoch conflicts with App checkpoint history")
+	}
+	var cp *appstore.DeliveryCheckpoint
+	for i := range checkpoints {
+		if checkpoints[i].Generation == b.ID.Generation {
+			cp = &checkpoints[i]
+			break
+		}
+	}
+	if cp == nil {
+		if b.Pending && b.ID.Sequence == 1 && b.Predecessor == nil && len(checkpoints) == 0 {
+			return nil
+		}
+		return refuse("missing matching checkpoint or unvalidated epoch")
+	}
+	if cp.Device != "" && cp.Device != b.Device {
+		return refuse("device binding mismatch")
+	}
+	if cp.Device == "" && b.Epoch != "legacy17" {
+		return refuse("unbound checkpoint in successor epoch")
+	}
+	if cp.Sequence == b.ID.Sequence && bytes.Equal(cp.Digest, b.ID.Digest[:]) {
+		// Native ACK/current payload is independent legacy evidence. Bind it with
+		// the existing atomic checkpoint transaction, without replaying projections.
+		if cp.Device == "" {
+			return a.db.ApplyAppStateDelivery(ctx, checkpointForBoundary(b), nil, nil)
+		}
+		return nil
+	}
+	if b.Pending && b.Predecessor != nil && b.Predecessor.Generation == b.ID.Generation && b.Predecessor.Sequence+1 == b.ID.Sequence && cp.Sequence == b.Predecessor.Sequence && bytes.Equal(cp.Digest, b.Predecessor.Digest[:]) {
+		return nil
+	}
+	return refuse("checkpoint identity/digest differs; legacy predecessor may be unavailable")
 }

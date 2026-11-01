@@ -161,3 +161,9 @@ func completedAppStateDeliveries(name appstate.WAPatchName, owned []any) []store
 	}
 	return ids
 }
+
+// SetAppStateDeliveryValidator configures local pairing admission before connect.
+// It runs under the producer lock before cache writes, drain or consumption.
+func (cli *Client) SetAppStateDeliveryValidator(validate func(context.Context, *store.AppStateDeliveryBoundary) error) {
+	cli.appStateProc.DeliveryValidator = validate
+}

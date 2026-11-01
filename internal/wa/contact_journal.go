@@ -205,3 +205,11 @@ func (s *journaledAppStateStore) AckAppStateDelivery(ctx context.Context, id sto
 	}
 	return native.AckAppStateDelivery(ctx, id)
 }
+
+func (s *journaledAppStateStore) AppStateDeliveryBoundary(ctx context.Context) (*store.AppStateDeliveryBoundary, error) {
+	native, ok := s.AppStateStore.(store.AppStateDeliveryStore)
+	if !ok {
+		return nil, fmt.Errorf("underlying app state store lacks native delivery")
+	}
+	return native.AppStateDeliveryBoundary(ctx)
+}

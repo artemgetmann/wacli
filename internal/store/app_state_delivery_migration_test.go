@@ -28,7 +28,7 @@ func TestAppStateDeliveryMigrationPreservesVersion33DataAndDebt(t *testing.T) {
 	must(d.Close())
 	raw, err := sql.Open("sqlite3", path)
 	must(err)
-	_, err = raw.Exec(`DROP TABLE app_state_delivery_recovery; DROP TABLE app_state_delivery_checkpoint; DELETE FROM schema_migrations WHERE version=34`)
+	_, err = raw.Exec(`DROP TABLE app_state_delivery_recovery; DROP TABLE app_state_delivery_checkpoint; DELETE FROM schema_migrations WHERE version>=34`)
 	must(err)
 	must(raw.Close())
 	d, err = Open(path)
@@ -46,7 +46,7 @@ func TestAppStateDeliveryMigrationPreservesVersion33DataAndDebt(t *testing.T) {
 	}
 	var version int
 	must(d.sql.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	if version != 34 {
+	if version != 35 {
 		t.Fatalf("migration version %d", version)
 	}
 	for _, table := range []string{"app_state_delivery_checkpoint", "app_state_delivery_recovery"} {

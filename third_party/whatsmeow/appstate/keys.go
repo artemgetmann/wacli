@@ -153,11 +153,12 @@ const (
 
 type Processor struct {
 	// DeliveryConsumer opts into native durable handoff. Configure before connecting.
-	DeliveryConsumer func(context.Context, *store.AppStateDelivery) error
-	keyCache         map[string]ExpandedAppStateKeys
-	keyCacheLock     sync.Mutex
-	Store            *store.Device
-	Log              waLog.Logger
+	DeliveryConsumer  func(context.Context, *store.AppStateDelivery) error
+	DeliveryValidator func(context.Context, *store.AppStateDeliveryBoundary) error
+	keyCache          map[string]ExpandedAppStateKeys
+	keyCacheLock      sync.Mutex
+	Store             *store.Device
+	Log               waLog.Logger
 }
 
 func NewProcessor(store *store.Device, log waLog.Logger) *Processor {

@@ -103,7 +103,7 @@ func TestAppStateDeliveryCLIStartupPendingAndRepair(t *testing.T) {
 	}
 	_, err = raw.Exec("DELETE FROM app_state_delivery_checkpoint")
 	must(err)
-	h.invoke(a.StoreDir(), "checkpoint sequence gap", false, "auth", "status")
+	h.invoke(a.StoreDir(), "store pairing refused", false, "auth", "status")
 	pending, err = native.PendingAppStateDelivery(ctx)
 	must(err)
 	if pending == nil || pending.ID.Sequence != 2 {

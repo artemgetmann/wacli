@@ -1,5 +1,5 @@
 {
-  "patch_sha256": "72ac4449812213d0914a4281cdeba45061d1ed20538fb29e7fc6e63615a79dcb",
+  "patch_sha256": "be67d7aa9e6b230f944a4b2086c0e8b0c7a7ee09293b8eb58f3159c615ef921a",
   "files": {
     "appstate.go": {
       "before": "78e3e6f785e50762ba6112c1c626e1ba3b53e7a44d007a5b7fb5cc3c972b1893",
@@ -11,7 +11,7 @@
     },
     "appstate/delivery.go": {
       "before": null,
-      "after": "12f37b16f13eaeb8a275abb24fa36fe2c43c50116e5f48079546d0ddc5dc5eac"
+      "after": "4148abb4433544ad03a0069b41fb7874984b4bc5d2c090fe9148d12780bbf000"
     },
     "appstate/hash.go": {
       "before": "4d2657c0600e12f85eb5119c3d6ea10a2e469f21072b05015e711917015e3bc0",
@@ -19,7 +19,7 @@
     },
     "appstate/keys.go": {
       "before": "2189a9ced5e2df1004881316465763c2ecdacedc5be0645b27a72648b3745b2f",
-      "after": "809173b0a1601c4d1c5aeed6c4a30eeeb04a508c27c251f94986440be256e872"
+      "after": "a72fc19c2f7cde4a4c882a2491bd6306d4b7504b97e4845b4456bbaa3254960c"
     },
     "appstate/recovery.go": {
       "before": "7597990ab69be0d34e74475fe7d59b87b7ac737935fcd7d94bf9b6474671e9eb",
@@ -27,7 +27,7 @@
     },
     "appstate_delivery.go": {
       "before": null,
-      "after": "9e93daadcf852424702b01a3b4c3839a244c2b8172c1a60c9054fa33c36151f3"
+      "after": "3efaf2532b5048080ffc177a596ec7df9075d9a908d3bef00fd012322e1e6060"
     },
     "appstate_delivery_crash_test.go": {
       "before": null,
@@ -45,17 +45,25 @@
       "before": null,
       "after": "cc2a9359dd8c8dbd8df6ae732c8cf9009fe8d769c5566e276900f072a88fd4b7"
     },
+    "appstate_pairing_serialization_test.go": {
+      "before": null,
+      "after": "2d63cac7261bd590afc9830c1400d4fee2fda0c9d3e73d5ec3bbf47d24fc3df1"
+    },
+    "appstate_predecessor_test.go": {
+      "before": null,
+      "after": "e6827dc835a809e02c1619fa3095fa7847e65bedd2c885e2adbd29d4b6b11840"
+    },
     "client.go": {
       "before": "4ba6b5f8548f9d0bc6ccc15bbdfecd65c615074538256833706b9bfb590bc9ea",
-      "after": "9ed6f4ddccd4836ecf6b86d7eadad2d6db5922f27409e437e3b56c2e2b6ec676"
+      "after": "1e350fc7c29bb766423cb5907160af05edc796459fc20c21e56616f9857289ed"
     },
     "store/appstate_delivery.go": {
       "before": null,
-      "after": "ff7fbb193f111e8725cea729deb24e83ea74cbdb604a71455c8f9596ee53b9c3"
+      "after": "87e240912d8a6b60ad1c30233e892efb35e0d5fed1e55f12b5fa5f2189a437b1"
     },
     "store/sqlstore/appstate_delivery.go": {
       "before": null,
-      "after": "dac7fcff0471453b8bd08bda27a74ee28f60ce11e8835ee77766d5f03fc53060"
+      "after": "0d03807bc6738ab3658822364bbeea55b57361547340258d5158a79475d12e9f"
     },
     "store/sqlstore/appstate_delivery_test.go": {
       "before": null,
@@ -64,6 +72,10 @@
     "store/sqlstore/upgrades/17-appstate-delivery.sql": {
       "before": null,
       "after": "2486c9ddc045e35a689e78fed0b90826688a1af2153a9a18dba33d4794a732ee"
+    },
+    "store/sqlstore/upgrades/18-appstate-predecessor.sql": {
+      "before": null,
+      "after": "fb47960d43048b57ef80fd89d99da860eeaa63a92e056fad99739f38c4bd1b1c"
     },
     "types/events/appstate.go": {
       "before": "facdc2e530e3e147bc1053d6a378aa2bcb7b5dbaac82c0d7831397a4d9b5de5d",

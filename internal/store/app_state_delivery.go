@@ -13,9 +13,11 @@ import (
 
 // DeliveryCheckpoint identifies local SDK consumption, not a protocol version.
 type DeliveryCheckpoint struct {
-	Generation string
-	Sequence   uint64
-	Digest     []byte
+	Predecessor *DeliveryCheckpoint
+	Device      string
+	Generation  string
+	Sequence    uint64
+	Digest      []byte
 }
 
 // ChatStateProjection is the covered, canonicalized portion of a verified
@@ -81,7 +83,11 @@ func (d *DB) ApplyAppStateDelivery(ctx context.Context, id DeliveryCheckpoint, a
 	defer tx.Rollback()
 	var seq uint64
 	var digest []byte
-	err = tx.QueryRowContext(ctx, `SELECT sequence,digest FROM app_state_delivery_checkpoint WHERE generation=?`, id.Generation).Scan(&seq, &digest)
+	var device string
+	err = tx.QueryRowContext(ctx, `SELECT sequence,digest,device_jid FROM app_state_delivery_checkpoint WHERE generation=?`, id.Generation).Scan(&seq, &digest, &device)
+	if err == nil && device != "" && device != id.Device {
+		return fmt.Errorf("app state checkpoint device conflict")
+	}
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
@@ -89,10 +95,28 @@ func (d *DB) ApplyAppStateDelivery(ctx context.Context, id DeliveryCheckpoint, a
 		if !bytes.Equal(digest, id.Digest) {
 			return fmt.Errorf("app state checkpoint digest conflict")
 		}
+		if device == "" && id.Device != "" {
+			if _, err = tx.ExecContext(ctx, `UPDATE app_state_delivery_checkpoint SET device_jid=? WHERE generation=?`, id.Device, id.Generation); err != nil {
+				return err
+			}
+		}
 		return tx.Commit()
 	}
 	if seq+1 != id.Sequence {
 		return fmt.Errorf("app state checkpoint sequence gap or stale delivery")
+	}
+	if id.Device != "" {
+		if seq == 0 {
+			var count int
+			if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM app_state_delivery_checkpoint`).Scan(&count); err != nil {
+				return err
+			}
+			if id.Sequence != 1 || count != 0 {
+				return fmt.Errorf("unvalidated app state epoch")
+			}
+		} else if id.Predecessor == nil || id.Predecessor.Generation != id.Generation || id.Predecessor.Sequence != seq || !bytes.Equal(id.Predecessor.Digest, digest) {
+			return fmt.Errorf("app state predecessor identity/digest mismatch")
+		}
 	}
 	q := storedb.New(tx)
 	for _, a := range actions {
@@ -137,7 +161,7 @@ func (d *DB) ApplyAppStateDelivery(ctx context.Context, id DeliveryCheckpoint, a
 			return err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO app_state_delivery_checkpoint(generation,sequence,digest) VALUES(?,?,?) ON CONFLICT(generation) DO UPDATE SET sequence=excluded.sequence,digest=excluded.digest`, id.Generation, id.Sequence, id.Digest)
+	_, err = tx.ExecContext(ctx, `INSERT INTO app_state_delivery_checkpoint(generation,sequence,digest,device_jid) VALUES(?,?,?,?) ON CONFLICT(generation) DO UPDATE SET sequence=excluded.sequence,digest=excluded.digest,device_jid=excluded.device_jid`, id.Generation, id.Sequence, id.Digest, id.Device)
 	if err != nil {
 		return err
 	}
@@ -203,4 +227,31 @@ func (d *DB) HasExactAppStateDeliveryCheckpoint(ctx context.Context, id Delivery
 		return false, fmt.Errorf("app state checkpoint digest conflict")
 	}
 	return true, nil
+}
+
+func migrateAppStateDeliveryDevice(d *DB) error {
+	exists, err := d.tableHasColumn("app_state_delivery_checkpoint", "device_jid")
+	if err != nil || exists {
+		return err
+	}
+	_, err = d.sql.Exec(`ALTER TABLE app_state_delivery_checkpoint ADD COLUMN device_jid TEXT NOT NULL DEFAULT ''`)
+	return err
+}
+
+// AppStateDeliveryCheckpoints exposes identity metadata only, never payloads.
+func (d *DB) AppStateDeliveryCheckpoints(ctx context.Context) ([]DeliveryCheckpoint, error) {
+	rows, err := d.sql.QueryContext(ctx, `SELECT generation,sequence,digest,device_jid FROM app_state_delivery_checkpoint`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DeliveryCheckpoint
+	for rows.Next() {
+		var cp DeliveryCheckpoint
+		if err = rows.Scan(&cp.Generation, &cp.Sequence, &cp.Digest, &cp.Device); err != nil {
+			return nil, err
+		}
+		out = append(out, cp)
+	}
+	return out, rows.Err()
 }

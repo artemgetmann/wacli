@@ -48,6 +48,7 @@ var schemaMigrations = []migration{
 	{version: 32, name: "message receipt retrieval revisions", up: migrateReceiptRetrieval},
 	{version: 33, name: "ordered chat auto-unarchive", up: migrateChatAutoUnarchive},
 	{version: 34, name: "app state delivery checkpoint", up: migrateAppStateDeliveryCheckpoint},
+	{version: 35, name: "app state delivery device binding", up: migrateAppStateDeliveryDevice},
 }
 
 func migratePlaceholderChatActivity(d *DB) error {
@@ -1054,6 +1055,8 @@ func (d *DB) tableHasColumn(table, column string) (bool, error) {
 
 func tableInfoPragma(table string) (string, error) {
 	switch table {
+	case "app_state_delivery_checkpoint":
+		return `PRAGMA table_info("app_state_delivery_checkpoint")`, nil
 	case "chats":
 		return `PRAGMA table_info("chats")`, nil
 	case "contacts":

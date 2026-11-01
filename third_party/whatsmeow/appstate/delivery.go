@@ -87,16 +87,37 @@ func encodeDeliveryMutations(mutations []Mutation) ([]byte, error) {
 // Configure DeliveryConsumer before connecting. It must not reenter SDK state
 // producers, wait for asynchronous event handlers, or take their reserved tasks.
 func (proc *Processor) DrainAppStateDelivery(ctx context.Context) error {
-	if proc.DeliveryConsumer == nil || proc.Store.ID == nil {
+	if proc.DeliveryConsumer == nil {
+		return nil
+	}
+	if proc.Store.ID == nil {
+		if proc.DeliveryValidator != nil {
+			return proc.DeliveryValidator(ctx, nil)
+		}
 		return nil
 	}
 	s, ok := proc.Store.AppState.(store.AppStateDeliveryStore)
 	if !ok {
 		return fmt.Errorf("durable app state consumer requires native delivery store")
 	}
+	boundary, err := s.AppStateDeliveryBoundary(ctx)
+	if err != nil {
+		return err
+	}
+	if boundary.Device != proc.Store.ID.String() {
+		return fmt.Errorf("app state delivery device mismatch")
+	}
 	pending, err := s.PendingAppStateDelivery(ctx)
 	if err != nil {
 		return err
+	}
+	if (pending != nil) != boundary.Pending || pending != nil && pending.ID != boundary.ID {
+		return fmt.Errorf("app state pending boundary changed")
+	}
+	if proc.DeliveryValidator != nil {
+		if err = proc.DeliveryValidator(ctx, boundary); err != nil {
+			return err
+		}
 	}
 	if pending == nil {
 		return nil

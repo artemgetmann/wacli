@@ -364,7 +364,7 @@
  		}
 --- /dev/null
 +++ b/appstate/delivery.go
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,162 @@
 +// Copyright (c) 2026 The wacli contributors
 +// SPDX-License-Identifier: MPL-2.0
 +package appstate
@@ -454,16 +454,37 @@
 +// Configure DeliveryConsumer before connecting. It must not reenter SDK state
 +// producers, wait for asynchronous event handlers, or take their reserved tasks.
 +func (proc *Processor) DrainAppStateDelivery(ctx context.Context) error {
-+	if proc.DeliveryConsumer == nil || proc.Store.ID == nil {
++	if proc.DeliveryConsumer == nil {
++		return nil
++	}
++	if proc.Store.ID == nil {
++		if proc.DeliveryValidator != nil {
++			return proc.DeliveryValidator(ctx, nil)
++		}
 +		return nil
 +	}
 +	s, ok := proc.Store.AppState.(store.AppStateDeliveryStore)
 +	if !ok {
 +		return fmt.Errorf("durable app state consumer requires native delivery store")
 +	}
++	boundary, err := s.AppStateDeliveryBoundary(ctx)
++	if err != nil {
++		return err
++	}
++	if boundary.Device != proc.Store.ID.String() {
++		return fmt.Errorf("app state delivery device mismatch")
++	}
 +	pending, err := s.PendingAppStateDelivery(ctx)
 +	if err != nil {
 +		return err
++	}
++	if (pending != nil) != boundary.Pending || pending != nil && pending.ID != boundary.ID {
++		return fmt.Errorf("app state pending boundary changed")
++	}
++	if proc.DeliveryValidator != nil {
++		if err = proc.DeliveryValidator(ctx, boundary); err != nil {
++			return err
++		}
 +	}
 +	if pending == nil {
 +		return nil
@@ -536,7 +557,7 @@
  }
 --- a/appstate/keys.go
 +++ b/appstate/keys.go
-@@ -152,10 +152,12 @@
+@@ -152,10 +152,13 @@
  )
  
  type Processor struct {
@@ -545,11 +566,12 @@
 -	Store        *store.Device
 -	Log          waLog.Logger
 +	// DeliveryConsumer opts into native durable handoff. Configure before connecting.
-+	DeliveryConsumer func(context.Context, *store.AppStateDelivery) error
-+	keyCache         map[string]ExpandedAppStateKeys
-+	keyCacheLock     sync.Mutex
-+	Store            *store.Device
-+	Log              waLog.Logger
++	DeliveryConsumer  func(context.Context, *store.AppStateDelivery) error
++	DeliveryValidator func(context.Context, *store.AppStateDeliveryBoundary) error
++	keyCache          map[string]ExpandedAppStateKeys
++	keyCacheLock      sync.Mutex
++	Store             *store.Device
++	Log               waLog.Logger
  }
  
  func NewProcessor(store *store.Device, log waLog.Logger) *Processor {
@@ -579,7 +601,7 @@
  		return mutations, fmt.Errorf("failed to reset app state version in database: %w", err)
 --- /dev/null
 +++ b/appstate_delivery.go
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,169 @@
 +// Copyright (c) 2026 The wacli contributors
 +// SPDX-License-Identifier: MPL-2.0
 +package whatsmeow
@@ -742,6 +764,12 @@
 +		}
 +	}
 +	return ids
++}
++
++// SetAppStateDeliveryValidator configures local pairing admission before connect.
++// It runs under the producer lock before cache writes, drain or consumption.
++func (cli *Client) SetAppStateDeliveryValidator(validate func(context.Context, *store.AppStateDeliveryBoundary) error) {
++	cli.appStateProc.DeliveryValidator = validate
 +}
 --- /dev/null
 +++ b/appstate_delivery_crash_test.go
@@ -1604,6 +1632,155 @@
 +		})
 +	}
 +}
+--- /dev/null
++++ b/appstate_pairing_serialization_test.go
+@@ -0,0 +1,77 @@
++// Copyright (c) 2026 The wacli contributors
++// SPDX-License-Identifier: MPL-2.0
++package whatsmeow
++
++import (
++	"context"
++	"errors"
++	"path/filepath"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"go.mau.fi/whatsmeow/appstate"
++	waBinary "go.mau.fi/whatsmeow/binary"
++	"go.mau.fi/whatsmeow/store"
++	log "go.mau.fi/whatsmeow/util/log"
++)
++
++func TestAppStatePairingAdmissionSerializesAndCancels(t *testing.T) {
++	d := deliveryTestDevice(t, filepath.Join(t.TempDir(), "session.db"))
++	cli := NewClient(d, log.Noop)
++	if e := cli.SetAppStateDeliveryConsumer(func(context.Context, *store.AppStateDelivery) error { return nil }); e != nil {
++		t.Fatal(e)
++	}
++	entered := make(chan struct{})
++	release := make(chan struct{})
++	var validations, queries atomic.Int32
++	cli.SetAppStateDeliveryValidator(func(ctx context.Context, b *store.AppStateDeliveryBoundary) error {
++		if validations.Add(1) == 1 {
++			close(entered)
++			select {
++			case <-release:
++				return nil
++			case <-ctx.Done():
++				return ctx.Err()
++			}
++		}
++		return nil
++	})
++	cli.appStateQuery = func(context.Context, infoQuery) (*waBinary.Node, error) {
++		queries.Add(1)
++		return nil, errors.New("unexpected transport")
++	}
++	owner := make(chan error, 1)
++	go func() { owner <- cli.DrainAppStateDelivery(t.Context()) }()
++	select {
++	case <-entered:
++	case <-time.After(time.Second):
++		t.Fatal("guard not entered")
++	}
++	ctx, cancel := context.WithCancel(t.Context())
++	waiter := make(chan error, 1)
++	go func() {
++		_, e := cli.DangerousInternals().FetchAppState(ctx, appstate.WAPatchRegularLow, false, false)
++		waiter <- e
++	}()
++	cancel()
++	select {
++	case e := <-waiter:
++		if !errors.Is(e, context.Canceled) {
++			t.Fatal(e)
++		}
++	case <-time.After(time.Second):
++		t.Fatal("producer admission did not cancel")
++	}
++	if validations.Load() != 1 || queries.Load() != 0 {
++		t.Fatal("producer bypassed active validation")
++	}
++	close(release)
++	if e := <-owner; e != nil {
++		t.Fatal(e)
++	}
++	cli.SetAppStateDeliveryValidator(func(context.Context, *store.AppStateDeliveryBoundary) error { return errors.New("pairing denied") })
++	if e := cli.ConnectContext(t.Context()); e == nil || e.Error() != "pairing denied" {
++		t.Fatalf("connect did not refuse before network: %v", e)
++	}
++}
+--- /dev/null
++++ b/appstate_predecessor_test.go
+@@ -0,0 +1,66 @@
++// Copyright (c) 2026 The wacli contributors
++// SPDX-License-Identifier: MPL-2.0
++package whatsmeow
++
++import (
++	"database/sql"
++	"path/filepath"
++	"testing"
++
++	"go.mau.fi/whatsmeow/store"
++)
++
++func TestNativePredecessorCommitsAndRollsBackWithCursor(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "session.db")
++	d := deliveryTestDevice(t, path)
++	s := d.AppState.(store.AppStateDeliveryStore)
++	ctx := t.Context()
++	first := store.AppStateTransition{Name: "regular_low", Kind: "delta", AfterVersion: 1, AfterHash: [128]byte{1}, Payload: []byte("synthetic first intent")}
++	one, e := s.StageAppStateDelivery(ctx, first)
++	if e != nil {
++		t.Fatal(e)
++	}
++	if e = s.AckAppStateDelivery(ctx, one.ID); e != nil {
++		t.Fatal(e)
++	}
++	raw, e := sql.Open("sqlite3", "file:"+path+"?_foreign_keys=on&_synchronous=FULL")
++	if e != nil {
++		t.Fatal(e)
++	}
++	defer raw.Close()
++	_, e = raw.Exec(`CREATE TRIGGER predecessor_fault BEFORE UPDATE OF payload ON whatsmeow_app_state_delivery WHEN NEW.sequence=2 BEGIN SELECT RAISE(FAIL,'synthetic native failure');END`)
++	if e != nil {
++		t.Fatal(e)
++	}
++	second := store.AppStateTransition{Name: first.Name, Kind: "delta", BeforeVersion: 1, BeforeHash: first.AfterHash, AfterVersion: 2, AfterHash: [128]byte{2}, Payload: []byte("synthetic second intent")}
++	if _, e = s.StageAppStateDelivery(ctx, second); e == nil {
++		t.Fatal("native write fault not surfaced")
++	}
++	b, e := s.AppStateDeliveryBoundary(ctx)
++	if e != nil {
++		t.Fatal(e)
++	}
++	if b.ID != one.ID || b.Predecessor != nil || b.Pending || b.Version != 1 || b.Hash != first.AfterHash {
++		t.Fatal("failed transaction changed predecessor/cursor boundary")
++	}
++	if _, e = raw.Exec("DROP TRIGGER predecessor_fault"); e != nil {
++		t.Fatal(e)
++	}
++	two, e := s.StageAppStateDelivery(ctx, second)
++	if e != nil {
++		t.Fatal(e)
++	}
++	if two.Boundary.Predecessor == nil || *two.Boundary.Predecessor != one.ID || two.ID.Sequence != 2 {
++		t.Fatal("successor did not atomically retain exact predecessor")
++	}
++	if e = s.AckAppStateDelivery(ctx, two.ID); e != nil {
++		t.Fatal(e)
++	}
++	b, e = s.AppStateDeliveryBoundary(ctx)
++	if e != nil {
++		t.Fatal(e)
++	}
++	if b.ID != two.ID || b.Predecessor == nil || *b.Predecessor != one.ID || b.Pending {
++		t.Fatal("ack discarded current/predecessor witness")
++	}
++}
 --- a/client.go
 +++ b/client.go
 @@ -101,8 +101,10 @@
@@ -1619,7 +1796,27 @@
  
  	historySyncNotifications        chan *waE2E.HistorySyncNotification
  	historySyncHandlerStarted       atomic.Bool
-@@ -993,6 +995,11 @@
+@@ -538,6 +540,9 @@
+ 	if cli == nil {
+ 		return ErrClientIsNil
+ 	}
++	if err := cli.DrainAppStateDelivery(ctx); err != nil {
++		return err
++	}
+ 
+ 	cli.socketLock.Lock()
+ 	defer cli.socketLock.Unlock()
+@@ -553,6 +558,9 @@
+ }
+ 
+ func (cli *Client) connect(ctx context.Context) error {
++	if err := cli.DrainAppStateDelivery(ctx); err != nil {
++		return err
++	}
+ 	cli.socketLock.Lock()
+ 	defer cli.socketLock.Unlock()
+ 
+@@ -993,6 +1001,11 @@
  }
  
  func (cli *Client) dispatchEvent(evt any) (handlerFailed bool) {
@@ -1633,7 +1830,7 @@
  		cli.eventHandlersLock.RUnlock()
 --- /dev/null
 +++ b/store/appstate_delivery.go
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,64 @@
 +// Copyright (c) 2026 The wacli contributors
 +// SPDX-License-Identifier: MPL-2.0
 +package store
@@ -1669,7 +1866,21 @@
 +	AddedMACs                   []AppStateMutationMAC
 +}
 +
++// AppStateDeliveryBoundary is durable native provenance, including after ACK.
++// Fresh epochs describe a tracking boundary, not prior projection completeness.
++type AppStateDeliveryBoundary struct {
++	Device      string
++	Epoch       string
++	ID          AppStateDeliveryID
++	Predecessor *AppStateDeliveryID
++	Name        string
++	Version     uint64
++	Hash        [128]byte
++	Pending     bool
++}
++
 +type AppStateDelivery struct {
++	Boundary   AppStateDeliveryBoundary
 +	ID         AppStateDeliveryID
 +	Transition AppStateTransition
 +}
@@ -1679,13 +1890,14 @@
 +// device store, and never acknowledge a different generation/sequence/digest.
 +// Acknowledgment means consumer checkpoint durability, not a WhatsApp receipt.
 +type AppStateDeliveryStore interface {
++	AppStateDeliveryBoundary(context.Context) (*AppStateDeliveryBoundary, error)
 +	StageAppStateDelivery(context.Context, AppStateTransition) (*AppStateDelivery, error)
 +	PendingAppStateDelivery(context.Context) (*AppStateDelivery, error)
 +	AckAppStateDelivery(context.Context, AppStateDeliveryID) error
 +}
 --- /dev/null
 +++ b/store/sqlstore/appstate_delivery.go
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,236 @@
 +// Copyright (c) 2026 The wacli contributors
 +// SPDX-License-Identifier: MPL-2.0
 +package sqlstore
@@ -1739,13 +1951,13 @@
 +		if err := s.requireDurableAppStateTransaction(ctx); err != nil {
 +			return err
 +		}
-+		_, err := s.db.Exec(ctx, `INSERT INTO whatsmeow_app_state_delivery(jid,generation,sequence) VALUES($1,$2,0) ON CONFLICT(jid) DO NOTHING`, s.JID, hex.EncodeToString(entropy[:]))
++		_, err := s.db.Exec(ctx, `INSERT INTO whatsmeow_app_state_delivery(jid,generation,sequence,epoch_kind) VALUES($1,$2,0,'fresh') ON CONFLICT(jid) DO NOTHING`, s.JID, hex.EncodeToString(entropy[:]))
 +		if err != nil {
 +			return err
 +		}
 +		// UPDATE locks the per-device row on both SQLite and PostgreSQL before
 +		// observing cursor state. A pending payload prevents any second delivery.
-+		err = s.db.QueryRow(ctx, `UPDATE whatsmeow_app_state_delivery SET sequence=sequence+1 WHERE jid=$1 AND payload IS NULL AND sequence<$2 RETURNING generation,sequence`, s.JID, int64(math.MaxInt64)).Scan(&delivery.ID.Generation, &delivery.ID.Sequence)
++		err = s.db.QueryRow(ctx, `UPDATE whatsmeow_app_state_delivery SET predecessor_sequence=CASE WHEN sequence>0 THEN sequence ELSE NULL END,predecessor_digest=CASE WHEN sequence>0 THEN digest ELSE NULL END,sequence=sequence+1 WHERE jid=$1 AND payload IS NULL AND sequence<$2 RETURNING generation,sequence`, s.JID, int64(math.MaxInt64)).Scan(&delivery.ID.Generation, &delivery.ID.Sequence)
 +		if errors.Is(err, sql.ErrNoRows) {
 +			return store.ErrAppStateDeliveryPending
 +		}
@@ -1785,6 +1997,11 @@
 +		return nil, err
 +	}
 +	delivery.ID.Digest = digest
++	boundary, err := s.AppStateDeliveryBoundary(ctx)
++	if err != nil {
++		return nil, err
++	}
++	delivery.Boundary = *boundary
 +	return delivery, nil
 +}
 +
@@ -1807,6 +2024,14 @@
 +	if sha256.Sum256(d.Transition.Payload) != d.ID.Digest {
 +		return nil, fmt.Errorf("app state delivery digest mismatch")
 +	}
++	boundary, err := s.AppStateDeliveryBoundary(ctx)
++	if err != nil {
++		return nil, err
++	}
++	if boundary.ID != d.ID || !boundary.Pending {
++		return nil, fmt.Errorf("app state pending boundary changed")
++	}
++	d.Boundary = *boundary
 +	return d, nil
 +}
 +
@@ -1848,6 +2073,66 @@
 +		}
 +	}
 +	return nil
++}
++
++func (s *SQLStore) AppStateDeliveryBoundary(ctx context.Context) (*store.AppStateDeliveryBoundary, error) {
++	if _, nested := s.db.Execable(ctx).(dbutil.Transaction); nested {
++		return nil, fmt.Errorf("boundary requires its own committed transaction")
++	}
++	var entropy [16]byte
++	if _, err := rand.Read(entropy[:]); err != nil {
++		return nil, err
++	}
++	if err := s.db.DoTxn(ctx, nil, func(ctx context.Context) error {
++		if err := s.requireDurableAppStateTransaction(ctx); err != nil {
++			return err
++		}
++		_, err := s.db.Exec(ctx, `INSERT INTO whatsmeow_app_state_delivery(jid,generation,sequence,epoch_kind) VALUES($1,$2,0,'fresh') ON CONFLICT(jid) DO NOTHING`, s.JID, hex.EncodeToString(entropy[:]))
++		return err
++	}); err != nil {
++		return nil, err
++	}
++	b := &store.AppStateDeliveryBoundary{Device: s.JID}
++	var name sql.NullString
++	var version, prev sql.NullInt64
++	var hash, digest, pred []byte
++	err := s.db.QueryRow(ctx, `SELECT generation,sequence,epoch_kind,name,after_version,after_hash,digest,payload IS NOT NULL,predecessor_sequence,predecessor_digest FROM whatsmeow_app_state_delivery WHERE jid=$1`, s.JID).Scan(&b.ID.Generation, &b.ID.Sequence, &b.Epoch, &name, &version, &hash, &digest, &b.Pending, &prev, &pred)
++	if err != nil {
++		return nil, err
++	}
++	if b.ID.Generation == "" || (b.Epoch != "fresh" && b.Epoch != "legacy17") {
++		return nil, fmt.Errorf("invalid native app state epoch")
++	}
++	if b.ID.Sequence == 0 {
++		if b.Epoch != "fresh" || name.Valid || version.Valid || len(hash) != 0 || len(digest) != 0 || b.Pending || prev.Valid || len(pred) != 0 {
++			return nil, fmt.Errorf("invalid fresh app state epoch")
++		}
++		return b, nil
++	}
++	if !name.Valid || !version.Valid || version.Int64 < 0 || len(hash) != 128 || len(digest) != 32 {
++		return nil, fmt.Errorf("invalid retained app state boundary")
++	}
++	b.Name = name.String
++	b.Version = uint64(version.Int64)
++	copy(b.Hash[:], hash)
++	copy(b.ID.Digest[:], digest)
++	if prev.Valid || len(pred) != 0 {
++		if !prev.Valid || prev.Int64 <= 0 || uint64(prev.Int64)+1 != b.ID.Sequence || len(pred) != 32 {
++			return nil, fmt.Errorf("invalid predecessor identity")
++		}
++		b.Predecessor = &store.AppStateDeliveryID{Generation: b.ID.Generation, Sequence: uint64(prev.Int64)}
++		copy(b.Predecessor.Digest[:], pred)
++	} else if b.ID.Sequence > 1 && b.Epoch != "legacy17" {
++		return nil, fmt.Errorf("missing native predecessor identity")
++	}
++	v, h, err := s.GetAppStateVersion(ctx, b.Name)
++	if err != nil {
++		return nil, err
++	}
++	if v != b.Version || h != b.Hash {
++		return nil, fmt.Errorf("app state boundary cursor/hash mismatch; preserve matching stores")
++	}
++	return b, nil
 +}
 --- /dev/null
 +++ b/store/sqlstore/appstate_delivery_test.go
@@ -1903,6 +2188,13 @@
 + digest bytea,
 + payload bytea
 +);
+--- /dev/null
++++ b/store/sqlstore/upgrades/18-appstate-predecessor.sql
+@@ -0,0 +1,4 @@
++-- v17 -> v18: Fence older writers and retain the predecessor of the one pending delivery
++ALTER TABLE whatsmeow_app_state_delivery ADD COLUMN epoch_kind TEXT NOT NULL DEFAULT 'legacy17';
++ALTER TABLE whatsmeow_app_state_delivery ADD COLUMN predecessor_sequence BIGINT;
++ALTER TABLE whatsmeow_app_state_delivery ADD COLUMN predecessor_digest bytea;
 --- a/types/events/appstate.go
 +++ b/types/events/appstate.go
 @@ -11,13 +11,16 @@
