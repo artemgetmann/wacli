@@ -732,7 +732,7 @@ func TestChatsMarkReadThroughOldOwnerRejectsBeforeStateChange(t *testing.T) {
 		case gotKind = <-gotKinds:
 		default:
 		}
-		if err == nil || gotKind != kind || !strings.Contains(stderr, "did not mark the chat read") {
+		if err == nil || gotKind != kind || !strings.Contains(stderr, "left the chat unread") {
 			t.Fatalf("kind=%q, error=%v, stderr=%q", gotKind, err, stderr)
 		}
 	}

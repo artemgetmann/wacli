@@ -708,7 +708,16 @@ func TestSyncDelegateStartsBeforeBlockingAppStateRecovery(t *testing.T) {
 	}
 	_, err := a.Sync(context.Background(), SyncOptions{
 		Mode: SyncModeOnce, IdleExit: time.Millisecond,
-		AfterConnect: func(context.Context) error { close(ready); return nil },
+		BeforeAppStateSync: func(context.Context) error { close(ready); return nil },
+		AfterConnect: func(context.Context) error {
+			// The ordinary hook retains its upstream post-bootstrap contract.
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if len(f.appStateFetches) == 0 {
+				t.Error("AfterConnect ran before initial app-state sync")
+			}
+			return nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("Sync: %v", err)
@@ -721,8 +730,12 @@ func TestSyncDelegateBindFailureStopsBeforeAppStateRecovery(t *testing.T) {
 	a.wa = f
 	bindErr := errors.New("unix socket path too long")
 	_, err := a.Sync(context.Background(), SyncOptions{
-		Mode:         SyncModeFollow,
-		AfterConnect: func(context.Context) error { return bindErr },
+		Mode:               SyncModeFollow,
+		BeforeAppStateSync: func(context.Context) error { return bindErr },
+		AfterConnect: func(context.Context) error {
+			t.Error("AfterConnect ran after the early delegate hook failed")
+			return nil
+		},
 	})
 	if !errors.Is(err, bindErr) {
 		t.Fatalf("Sync: %v, want bind error", err)

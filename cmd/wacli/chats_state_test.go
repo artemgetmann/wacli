@@ -220,7 +220,7 @@ func TestOldOwnerRejectsThroughKindWithoutMutation(t *testing.T) {
 	// as legacy mark_read by an owner that predates this flag.
 	err := fmt.Errorf(`unsupported send kind %q`, markReadThroughKind)
 	got := explainThroughDelegateError(err, true)
-	if got == nil || !strings.Contains(got.Error(), "did not mark the chat read") || !strings.Contains(got.Error(), "restart `wacli sync`") {
+	if got == nil || !strings.Contains(got.Error(), "left the chat unread") || !strings.Contains(got.Error(), "restart `wacli sync`") {
 		t.Fatalf("old-owner error=%v", got)
 	}
 }
