@@ -37,7 +37,7 @@ const (
 // one-shot chat-state command is connected. Remove it only after closing the
 // connection so whatsmeow cannot advance another collection without persisting it.
 func (a *App) AddChatStatePersistenceHandler(ctx context.Context) (func(), error) {
-	if err := a.OpenWA(); err != nil {
+	if err := a.OpenWAContext(ctx); err != nil {
 		return nil, err
 	}
 	waClient := a.WA()
@@ -78,7 +78,7 @@ func (a *App) ArchiveChat(ctx context.Context, jid types.JID, archive bool) erro
 	if !pending.reserved {
 		return fmt.Errorf("WhatsApp app state send completed without an apply boundary")
 	}
-	return a.completeLocalAppStateWrite(ctx, &pending, postSendEvents, func() error {
+	return a.completeCoveredLocalAppStateWrite(ctx, &pending, postSendEvents, func() error {
 		return a.db.ApplyChatArchive(chatJID, archive, archiveTime)
 	})
 }
@@ -101,7 +101,7 @@ func (a *App) PinChat(ctx context.Context, jid types.JID, pin bool) error {
 	if !pending.reserved {
 		return fmt.Errorf("WhatsApp app state send completed without an apply boundary")
 	}
-	return a.completeLocalAppStateWrite(ctx, &pending, postSendEvents, func() error {
+	return a.completeCoveredLocalAppStateWrite(ctx, &pending, postSendEvents, func() error {
 		return a.db.SetChatPinned(chatJID, pin)
 	})
 }
@@ -125,7 +125,7 @@ func (a *App) MuteChat(ctx context.Context, jid types.JID, mute bool, duration t
 	if !pending.reserved {
 		return fmt.Errorf("WhatsApp app state send completed without an apply boundary")
 	}
-	return a.completeLocalAppStateWrite(ctx, &pending, postSendEvents, func() error {
+	return a.completeCoveredLocalAppStateWrite(ctx, &pending, postSendEvents, func() error {
 		return a.db.SetChatMutedUntil(chatJID, mutedUntil)
 	})
 }
@@ -176,7 +176,7 @@ func (a *App) markChatRead(ctx context.Context, jid types.JID, read bool, throug
 	if !pending.reserved {
 		return fmt.Errorf("WhatsApp app state send completed without an apply boundary")
 	}
-	return a.completeLocalAppStateWrite(ctx, &pending, postSendEvents, func() error {
+	return a.completeCoveredLocalAppStateWrite(ctx, &pending, postSendEvents, func() error {
 		if !read {
 			return a.db.SetChatUnread(chatJID, true)
 		}
@@ -461,7 +461,7 @@ func (a *App) recoverMismatchingAppState(ctx context.Context, collection appstat
 			result <- nil
 			return
 		}
-		result <- a.persistFetchedAppStateEvents(persistCtx, eventsToPersist, tracker)
+		result <- a.persistRecoveredAppStateDelivery(persistCtx, collection, eventsToPersist, tracker)
 	})
 	if err := a.appStatePersist.waitThrough(persistCtx, frontier); err != nil {
 		finishDrain(err)
@@ -536,6 +536,13 @@ func (c *appStateRecoveryCapture) handle(evt any) {
 				ticket: c.app.appStatePersist.reserve(),
 			}
 		}
+		return
+	}
+	// Delivery-tagged generic events carry correlation even when their action
+	// has a separate typed handler. Settlement below is collection-filtered, so
+	// an unrelated concurrent collection's ID cannot clear this capture's debt.
+	if generic, ok := evt.(*events.AppState); ok && generic != nil && generic.DeliveryID != nil {
+		c.captured = append(c.captured, evt)
 		return
 	}
 	if slices.Contains(appStateCollectionsForEvent(evt), c.collection) {
@@ -672,7 +679,7 @@ func (a *App) runLateAppStateRecovery(collection appstate.WAPatchName, cont *lat
 	tracker := &appStatePersistenceTracker{}
 	result := make(chan error, 1)
 	frontier := a.appStatePersist.complete(completion.ticket, func() {
-		result <- a.persistFetchedAppStateEvents(persistCtx, completion.events, tracker)
+		result <- a.persistRecoveredAppStateDelivery(persistCtx, collection, completion.events, tracker)
 	})
 	if err := a.appStatePersist.waitThrough(persistCtx, frontier); err != nil {
 		finishDrain(err)
@@ -740,6 +747,9 @@ func (a *App) fetchAndPersistAppState(ctx context.Context, collection appstate.W
 			// writes precede event delivery and must retain their canonical JID.
 			_, drainErr := a.drainContactJournal(persistCtx)
 			persistErr = errors.Join(persistErr, drainErr)
+		}
+		if fullSync && fetchErr == nil && persistErr == nil {
+			persistErr = a.settleFetchedAppStateDeliveryRecovery(persistCtx, collection, eventsToPersist)
 		}
 		result <- persistErr
 	})
@@ -991,4 +1001,31 @@ func (a *App) emitChatStateWarning(kind string, jid types.JID, err error) {
 		fmt.Sprintf("warning: failed to store %s chat state for %s: %v", kind, jid, err),
 		map[string]any{"kind": kind, "jid": jid.String(), "error": err.Error()},
 	)
+}
+
+func (a *App) completeCoveredLocalAppStateWrite(ctx context.Context, pending *pendingLocalAppStateWrite, events []any, persist func() error) error {
+	durable, ok := a.wa.(interface{ DurableChatStateProjection() bool })
+	covered := ok && durable.DurableChatStateProjection()
+	if covered {
+		persist = func() error { return nil }
+	}
+	if err := a.completeLocalAppStateWrite(ctx, pending, events, persist); err != nil {
+		return err
+	}
+	if covered {
+		return a.db.ClearAppStateRecoveryIntent(string(pending.collection), pending.generation)
+	}
+	return nil
+}
+
+func (a *App) persistRecoveredAppStateDelivery(ctx context.Context, collection appstate.WAPatchName, evts []any, tracker *appStatePersistenceTracker) error {
+	err := a.persistFetchedAppStateEvents(ctx, evts, tracker)
+	if collection == appstate.WAPatchCriticalUnblockLow {
+		_, drainErr := a.drainContactJournal(ctx)
+		err = errors.Join(err, drainErr)
+	}
+	if err == nil {
+		err = a.settleFetchedAppStateDeliveryRecovery(ctx, collection, evts)
+	}
+	return err
 }

@@ -1,0 +1,1785 @@
+--- a/appstate.go
++++ b/appstate.go
+@@ -15,6 +15,7 @@
+ 
+ 	"github.com/rs/zerolog"
+ 	"go.mau.fi/util/exslices"
++	"google.golang.org/protobuf/proto"
+ 
+ 	"go.mau.fi/whatsmeow/appstate"
+ 	waBinary "go.mau.fi/whatsmeow/binary"
+@@ -43,9 +44,17 @@
+ 	if cli == nil {
+ 		return nil, ErrClientIsNil
+ 	}
+-	cli.appStateSyncLock.Lock()
++	if err := cli.appStateSyncLock.Lock(ctx); err != nil {
++		return nil, err
++	}
+ 	defer cli.appStateSyncLock.Unlock()
+-	if fullSync {
++	return cli.fetchAppStateLocked(ctx, name, fullSync, onlyIfNotSynced)
++}
++func (cli *Client) fetchAppStateLocked(ctx context.Context, name appstate.WAPatchName, fullSync, onlyIfNotSynced bool) ([]any, error) {
++	if err := cli.appStateProc.DrainAppStateDelivery(ctx); err != nil {
++		return nil, err
++	}
++	if fullSync && cli.appStateProc.DeliveryConsumer == nil {
+ 		err := cli.Store.AppState.DeleteAppStateVersion(ctx, string(name))
+ 		if err != nil {
+ 			return nil, fmt.Errorf("failed to reset app state %s version: %w", name, err)
+@@ -54,6 +63,10 @@
+ 	version, hash, err := cli.Store.AppState.GetAppStateVersion(ctx, string(name))
+ 	if err != nil {
+ 		return nil, fmt.Errorf("failed to get app state %s version: %w", name, err)
++	}
++	if fullSync && cli.appStateProc.DeliveryConsumer != nil {
++		version = 0
++		hash = [128]byte{}
+ 	}
+ 	if version == 0 {
+ 		fullSync = true
+@@ -121,23 +134,37 @@
+ 	}
+ 	name := appstate.WAPatchName(snapshot.GetCollectionName())
+ 	version := snapshot.GetVersion().GetVersion()
+-	currentVersion, _, err := cli.Store.AppState.GetAppStateVersion(ctx, string(name))
+-	if err != nil {
+-		cli.Log.Errorf("Failed to get current app state %s version for %s: %v", name, reqID, err)
++	ready := func() bool {
++		if err := cli.appStateSyncLock.Lock(ctx); err != nil {
++			return false
++		}
++		defer cli.appStateSyncLock.Unlock()
++		if err := cli.appStateProc.DrainAppStateDelivery(ctx); err != nil {
++			cli.Log.Warnf("Pending app state projection: %v", err)
++			return false
++		}
++		currentVersion, _, err := cli.Store.AppState.GetAppStateVersion(ctx, string(name))
++		if err != nil {
++			cli.Log.Errorf("Failed to get current app state %s version for %s: %v", name, reqID, err)
++			return false
++		} else if currentVersion >= version {
++			cli.Log.Infof("Ignoring app state recovery response for %s as current version %d is newer than or equal to recovery version %d", reqID, currentVersion, snapshot.GetVersion().GetVersion())
++			return false
++		}
++		cli.Log.Debugf("Handling app state recovery response for %s", reqID)
++		mutations, err := cli.appStateProc.ProcessRecovery(ctx, snapshot)
++		if err != nil {
++			cli.Log.Warnf("Failed to parse app state recovery blob for %s: %v", reqID, err)
++			return false
++		}
++		err = cli.collectEventsToDispatch(ctx, name, mutations, true, eventsToDispatchPtr)
++		if err != nil {
++			cli.Log.Warnf("Failed to collect app state events for %s: %v", reqID, err)
++			return false
++		}
+ 		return true
+-	} else if currentVersion >= version {
+-		cli.Log.Infof("Ignoring app state recovery response for %s as current version %d is newer than or equal to recovery version %d", reqID, currentVersion, snapshot.GetVersion().GetVersion())
+-		return true
+-	}
+-	cli.Log.Debugf("Handling app state recovery response for %s", reqID)
+-	mutations, err := cli.appStateProc.ProcessRecovery(ctx, snapshot)
+-	if err != nil {
+-		cli.Log.Warnf("Failed to parse app state recovery blob for %s: %v", reqID, err)
+-		return true
+-	}
+-	err = cli.collectEventsToDispatch(ctx, name, mutations, true, eventsToDispatchPtr)
+-	if err != nil {
+-		cli.Log.Warnf("Failed to collect app state events for %s: %v", reqID, err)
++	}()
++	if !ready {
+ 		return true
+ 	}
+ 	eventsToDispatch = append(eventsToDispatch, &events.AppStateSyncComplete{Name: name, Version: version, Recovery: true})
+@@ -159,6 +186,11 @@
+ 	fullSync bool,
+ 	eventsToDispatch *[]any,
+ ) (appstate.HashState, error) {
++	if fullSync && state == (appstate.HashState{}) {
++		copy := *patches
++		copy.Reset = true
++		patches = &copy
++	}
+ 	mutations, newState, err := cli.appStateProc.DecodePatches(ctx, patches, state, true)
+ 	if err != nil {
+ 		if errors.Is(err, appstate.ErrKeyNotFound) {
+@@ -190,7 +222,7 @@
+ 	}
+ 	for _, mutation := range mutations {
+ 		if eventsToDispatch != nil && mutation.Operation == waServerSync.SyncdMutation_SET {
+-			*eventsToDispatch = append(*eventsToDispatch, &events.AppState{Index: mutation.Index, SyncActionValue: mutation.Action})
++			*eventsToDispatch = append(*eventsToDispatch, &events.AppState{Index: mutation.Index, SyncActionValue: mutation.Action, DeliveryID: mutation.DeliveryID})
+ 		}
+ 		evt := cli.dispatchAppState(ctx, name, mutation, fullSync)
+ 		if eventsToDispatch != nil && evt != nil {
+@@ -274,19 +306,19 @@
+ 				mutedUntil = time.UnixMilli(act.GetMuteEndTimestamp())
+ 			}
+ 		}
+-		if cli.Store.ChatSettings != nil {
++		if cli.Store.ChatSettings != nil && mutation.DeliveryID == nil {
+ 			storeUpdateError = cli.Store.ChatSettings.PutMutedUntil(ctx, jid, mutedUntil)
+ 		}
+ 	case appstate.IndexPin:
+ 		act := mutation.Action.GetPinAction()
+ 		eventToDispatch = &events.Pin{JID: jid, Timestamp: ts, Action: act, FromFullSync: fullSync}
+-		if cli.Store.ChatSettings != nil {
++		if cli.Store.ChatSettings != nil && mutation.DeliveryID == nil {
+ 			storeUpdateError = cli.Store.ChatSettings.PutPinned(ctx, jid, act.GetPinned())
+ 		}
+ 	case appstate.IndexArchive:
+ 		act := mutation.Action.GetArchiveChatAction()
+ 		eventToDispatch = &events.Archive{JID: jid, Timestamp: ts, Action: act, FromFullSync: fullSync}
+-		if cli.Store.ChatSettings != nil {
++		if cli.Store.ChatSettings != nil && mutation.DeliveryID == nil {
+ 			storeUpdateError = cli.Store.ChatSettings.PutArchived(ctx, jid, act.GetArchived())
+ 		}
+ 	case appstate.IndexContact:
+@@ -453,6 +485,18 @@
+ 				Msg("Stored WASA root secrets from app state")
+ 		}
+ 	}
++	switch evt := eventToDispatch.(type) {
++	case *events.Archive:
++		evt.DeliveryID = mutation.DeliveryID
++	case *events.Pin:
++		evt.DeliveryID = mutation.DeliveryID
++	case *events.Mute:
++		evt.DeliveryID = mutation.DeliveryID
++	case *events.MarkChatAsRead:
++		evt.DeliveryID = mutation.DeliveryID
++	case *events.UnarchiveChatsSetting:
++		evt.DeliveryID = mutation.DeliveryID
++	}
+ 	if storeUpdateError != nil {
+ 		cli.Log.Errorf("Failed to update device store after app state mutation: %v", storeUpdateError)
+ 	}
+@@ -460,6 +504,9 @@
+ }
+ 
+ func (cli *Client) downloadExternalAppStateBlob(ctx context.Context, ref *waServerSync.ExternalBlobReference) ([]byte, error) {
++	if cli.appStateBlobDownload != nil {
++		return cli.appStateBlobDownload(ctx, ref)
++	}
+ 	return cli.Download(ctx, ref)
+ }
+ 
+@@ -471,7 +518,7 @@
+ 	if !snapshot {
+ 		attrs["version"] = fromVersion
+ 	}
+-	resp, err := cli.sendIQ(ctx, infoQuery{
++	resp, err := cli.queryAppState(ctx, infoQuery{
+ 		Namespace: "w:sync:app:state",
+ 		Type:      "set",
+ 		To:        types.ServerJID,
+@@ -542,6 +589,13 @@
+ //
+ //	cli.SendAppState(ctx, appstate.BuildMute(targetJID, true, 24 * time.Hour))
+ func (cli *Client) SendAppState(ctx context.Context, patch appstate.PatchInfo) error {
++	if cli == nil {
++		return ErrClientIsNil
++	}
++	if err := cli.appStateSyncLock.Lock(ctx); err != nil {
++		return err
++	}
++	defer cli.appStateSyncLock.Unlock()
+ 	return cli.sendAppState(ctx, patch, true)
+ }
+ 
+@@ -549,6 +603,9 @@
+ 	if cli == nil {
+ 		return ErrClientIsNil
+ 	}
++	if err := cli.appStateProc.DrainAppStateDelivery(ctx); err != nil {
++		return err
++	}
+ 	version, hash, err := cli.Store.AppState.GetAppStateVersion(ctx, string(patch.Type))
+ 	if err != nil {
+ 		return err
+@@ -568,7 +625,7 @@
+ 		return err
+ 	}
+ 
+-	resp, err := cli.sendIQ(ctx, infoQuery{
++	resp, err := cli.queryAppState(ctx, infoQuery{
+ 		Namespace: "w:sync:app:state",
+ 		Type:      iqSet,
+ 		To:        types.ServerJID,
+@@ -624,10 +681,25 @@
+ 		}
+ 		return mainErr
+ 	}
+-	eventsToDispatch, err := cli.fetchAppState(ctx, patch.Type, false, false)
++	var acceptedEvents []any
++	if cli.appStateProc.DeliveryConsumer != nil {
++		// EncodePatch signs the next version relative to the request base. Only
++		// this final successful IQ response authorizes applying that exact request;
++		// neither a conflict response nor an observed later cursor is acceptance.
++		accepted := &waServerSync.SyncdPatch{}
++		if err = proto.Unmarshal(encodedPatch, accepted); err != nil {
++			return fmt.Errorf("app state update accepted; local payload decode failed: %w", err)
++		}
++		accepted.Version = &waServerSync.SyncdVersion{Version: proto.Uint64(state.Version + 1)}
++		if _, err = cli.applyAppStatePatches(ctx, patch.Type, state, &appstate.PatchList{Name: patch.Type, Patches: []*waServerSync.SyncdPatch{accepted}}, false, &acceptedEvents); err != nil {
++			return fmt.Errorf("app state update accepted; local persistence incomplete (recovery required): %w", err)
++		}
++	}
++	eventsToDispatch, err := cli.fetchAppStateLocked(ctx, patch.Type, false, false)
+ 	if err != nil {
+ 		return fmt.Errorf("failed to fetch app state after sending update: %w", err)
+ 	}
++	eventsToDispatch = append(acceptedEvents, eventsToDispatch...)
+ 	go func() {
+ 		for _, evt := range eventsToDispatch {
+ 			cli.dispatchEvent(evt)
+--- a/appstate/decode.go
++++ b/appstate/decode.go
+@@ -26,6 +26,10 @@
+ 
+ // PatchList represents a decoded response to getting app state patches from the WhatsApp servers.
+ type PatchList struct {
++	// Reset is set only by an explicit full-sync caller, never from the wire.
++	// It stages the first verified from-zero patch as an atomic replacement
++	// when the server supplies patches instead of a snapshot blob.
++	Reset          bool
+ 	Name           WAPatchName
+ 	HasMorePatches bool
+ 	Patches        []*waServerSync.SyncdPatch
+@@ -226,7 +230,10 @@
+ 	return nil
+ }
+ 
+-func (proc *Processor) storeMACs(ctx context.Context, name WAPatchName, currentState HashState, out *patchOutput) error {
++func (proc *Processor) storeMACs(ctx context.Context, name WAPatchName, beforeState, currentState HashState, out *patchOutput, start int, kind string) error {
++	if proc.DeliveryConsumer != nil {
++		return proc.commitDelivery(ctx, name, beforeState, currentState, out, start, kind)
++	}
+ 	err := proc.Store.AppState.PutAppStateVersion(ctx, string(name), currentState.Version, currentState.Hash)
+ 	if err != nil {
+ 		return fmt.Errorf("failed to update app state version in the database: %w", err)
+@@ -302,7 +309,7 @@
+ 		err = fmt.Errorf("failed to decode snapshot of v%d: %w", currentState.Version, err)
+ 		return
+ 	}
+-	err = proc.storeMACs(ctx, name, currentState, &out)
++	err = proc.storeMACs(ctx, name, initialState, currentState, &out, len(newMutationsInput), "snapshot")
+ 	if err != nil {
+ 		return
+ 	}
+@@ -316,6 +323,7 @@
+ 	patch *waServerSync.SyncdPatch,
+ 	currentState HashState,
+ 	validateMACs bool,
++	ignoreSavedMACs bool,
+ ) (newState HashState, warn []error, err error) {
+ 	version := patch.GetVersion().GetVersion()
+ 	newState = currentState
+@@ -332,6 +340,9 @@
+ 			}
+ 		}
+ 		// Previous value not found in current patch, look in the database
++		if ignoreSavedMACs {
++			return nil, nil
++		}
+ 		return proc.Store.AppState.GetAppStateMutationMAC(ctx, string(patchName), indexMAC)
+ 	})
+ 	if err != nil {
+@@ -362,6 +373,9 @@
+ 	validateMACs bool,
+ ) (newMutations []Mutation, currentState HashState, err error) {
+ 	currentState = initialState
++	if err = proc.DrainAppStateDelivery(ctx); err != nil {
++		return
++	}
+ 	var expectedLength int
+ 	if list.Snapshot != nil {
+ 		expectedLength = len(list.Snapshot.GetRecords())
+@@ -378,12 +392,12 @@
+ 		}
+ 	}
+ 
+-	for _, patch := range list.Patches {
++	for patchIndex, patch := range list.Patches {
+ 		var out patchOutput
+ 		var warn []error
+ 		var newState HashState
+ 		var fakeIndexesToRemove map[[32]byte][]byte
+-		newState, warn, err = proc.validatePatch(ctx, list.Name, patch, currentState, validateMACs)
++		newState, warn, err = proc.validatePatch(ctx, list.Name, patch, currentState, validateMACs, list.Reset && list.Snapshot == nil && patchIndex == 0)
+ 		if err != nil {
+ 			if len(warn) > 0 {
+ 				proc.Log.Warnf("Warnings while updating hash for %s: %+v", list.Name, warn)
+@@ -396,7 +410,11 @@
+ 		if err != nil {
+ 			return
+ 		}
+-		err = proc.storeMACs(ctx, list.Name, newState, &out)
++		kind := "delta"
++		if list.Reset && list.Snapshot == nil && patchIndex == 0 {
++			kind = "snapshot"
++		}
++		err = proc.storeMACs(ctx, list.Name, currentState, newState, &out, len(newMutations), kind)
+ 		if err != nil {
+ 			return
+ 		}
+--- /dev/null
++++ b/appstate/delivery.go
+@@ -0,0 +1,141 @@
++// Copyright (c) 2026 The wacli contributors
++// SPDX-License-Identifier: MPL-2.0
++package appstate
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++
++	"go.mau.fi/whatsmeow/proto/waServerSync"
++	"go.mau.fi/whatsmeow/proto/waSyncAction"
++	"go.mau.fi/whatsmeow/store"
++	"google.golang.org/protobuf/proto"
++)
++
++type deliveryMutation struct {
++	KeyID              []byte
++	Operation          waServerSync.SyncdMutation_SyncdOperation
++	Action             []byte
++	Version            int32
++	Index              []string
++	IndexMAC, ValueMAC []byte
++	PatchVersion       uint64
++}
++type deliveryPayload struct {
++	Format    int
++	Mutations []deliveryMutation
++}
++
++// DecodeDeliveryMutations reads the bounded versioned envelope, independently of
++// cursor versions. Callers must not infer peer freshness from delivery identity.
++func DecodeDeliveryMutations(payload []byte) ([]Mutation, error) {
++	if len(payload) == 0 || len(payload) > store.MaxAppStateDeliveryBytes {
++		return nil, fmt.Errorf("invalid app state delivery size")
++	}
++	var envelope deliveryPayload
++	if err := json.Unmarshal(payload, &envelope); err != nil {
++		return nil, err
++	}
++	if envelope.Format != 1 {
++		return nil, fmt.Errorf("unsupported app state delivery format")
++	}
++	mutations := make([]Mutation, len(envelope.Mutations))
++	for i, m := range envelope.Mutations {
++		var action *waSyncAction.SyncActionValue
++		if m.Action != nil {
++			action = &waSyncAction.SyncActionValue{}
++			if err := proto.Unmarshal(m.Action, action); err != nil {
++				return nil, err
++			}
++		}
++		mutations[i] = Mutation{KeyID: m.KeyID, Operation: m.Operation, Action: action, Version: m.Version, Index: m.Index, IndexMAC: m.IndexMAC, ValueMAC: m.ValueMAC, PatchVersion: m.PatchVersion}
++	}
++	return mutations, nil
++}
++
++func encodeDeliveryMutations(mutations []Mutation) ([]byte, error) {
++	envelope := deliveryPayload{Format: 1, Mutations: make([]deliveryMutation, len(mutations))}
++	for i, m := range mutations {
++		var encoded []byte
++		if m.Action != nil {
++			var err error
++			encoded, err = proto.Marshal(m.Action)
++			if err != nil {
++				return nil, err
++			}
++			if encoded == nil {
++				encoded = []byte{}
++			}
++		}
++		envelope.Mutations[i] = deliveryMutation{m.KeyID, m.Operation, encoded, m.Version, m.Index, m.IndexMAC, m.ValueMAC, m.PatchVersion}
++	}
++	payload, err := json.Marshal(envelope)
++	if err != nil {
++		return nil, err
++	}
++	if len(payload) > store.MaxAppStateDeliveryBytes {
++		return nil, fmt.Errorf("app state delivery exceeds payload limit")
++	}
++	return payload, nil
++}
++
++// DrainAppStateDelivery retries the one pending projection. The consumer must
++// commit its own atomic projection/checkpoint before returning nil. Exact ack
++// occurs only afterwards; an ack failure leaves replay safe via that checkpoint.
++// Configure DeliveryConsumer before connecting. It must not reenter SDK state
++// producers, wait for asynchronous event handlers, or take their reserved tasks.
++func (proc *Processor) DrainAppStateDelivery(ctx context.Context) error {
++	if proc.DeliveryConsumer == nil || proc.Store.ID == nil {
++		return nil
++	}
++	s, ok := proc.Store.AppState.(store.AppStateDeliveryStore)
++	if !ok {
++		return fmt.Errorf("durable app state consumer requires native delivery store")
++	}
++	pending, err := s.PendingAppStateDelivery(ctx)
++	if err != nil {
++		return err
++	}
++	if pending == nil {
++		return nil
++	}
++	if err = proc.DeliveryConsumer(ctx, pending); err != nil {
++		return errors.Join(store.ErrAppStateDeliveryPending, err)
++	}
++	if err = s.AckAppStateDelivery(ctx, pending.ID); err != nil {
++		return errors.Join(store.ErrAppStateDeliveryPending, err)
++	}
++	return nil
++}
++
++func (proc *Processor) commitDelivery(ctx context.Context, name WAPatchName, before, after HashState, out *patchOutput, start int, kind string) error {
++	if err := proc.DrainAppStateDelivery(ctx); err != nil {
++		return err
++	}
++	s, ok := proc.Store.AppState.(store.AppStateDeliveryStore)
++	if !ok {
++		return fmt.Errorf("durable app state consumer requires native delivery store")
++	}
++	if kind != "delta" {
++		var err error
++		before.Version, before.Hash, err = proc.Store.AppState.GetAppStateVersion(ctx, string(name))
++		if err != nil {
++			return err
++		}
++	}
++	payload, err := encodeDeliveryMutations(out.Mutations[start:])
++	if err != nil {
++		return err
++	}
++	staged, err := s.StageAppStateDelivery(ctx, store.AppStateTransition{Name: string(name), Kind: kind, BeforeVersion: before.Version, BeforeHash: before.Hash, AfterVersion: after.Version, AfterHash: after.Hash, Payload: payload, RemovedMACs: out.RemovedMACs, AddedMACs: out.AddedMACs})
++	if err != nil {
++		return err
++	}
++	for i := start; i < len(out.Mutations); i++ {
++		id := staged.ID
++		out.Mutations[i].DeliveryID = &id
++	}
++	return proc.DrainAppStateDelivery(ctx)
++}
+--- a/appstate/hash.go
++++ b/appstate/hash.go
+@@ -17,16 +17,18 @@
+ 	"go.mau.fi/whatsmeow/appstate/lthash"
+ 	"go.mau.fi/whatsmeow/proto/waServerSync"
+ 	"go.mau.fi/whatsmeow/proto/waSyncAction"
++	"go.mau.fi/whatsmeow/store"
+ )
+ 
+ type Mutation struct {
+-	KeyID     []byte
+-	Operation waServerSync.SyncdMutation_SyncdOperation
+-	Action    *waSyncAction.SyncActionValue
+-	Version   int32
+-	Index     []string
+-	IndexMAC  []byte
+-	ValueMAC  []byte
++	DeliveryID *store.AppStateDeliveryID
++	KeyID      []byte
++	Operation  waServerSync.SyncdMutation_SyncdOperation
++	Action     *waSyncAction.SyncActionValue
++	Version    int32
++	Index      []string
++	IndexMAC   []byte
++	ValueMAC   []byte
+ 
+ 	PatchVersion uint64
+ }
+--- a/appstate/keys.go
++++ b/appstate/keys.go
+@@ -152,10 +152,12 @@
+ )
+ 
+ type Processor struct {
+-	keyCache     map[string]ExpandedAppStateKeys
+-	keyCacheLock sync.Mutex
+-	Store        *store.Device
+-	Log          waLog.Logger
++	// DeliveryConsumer opts into native durable handoff. Configure before connecting.
++	DeliveryConsumer func(context.Context, *store.AppStateDelivery) error
++	keyCache         map[string]ExpandedAppStateKeys
++	keyCacheLock     sync.Mutex
++	Store            *store.Device
++	Log              waLog.Logger
+ }
+ 
+ func NewProcessor(store *store.Device, log waLog.Logger) *Processor {
+--- a/appstate/recovery.go
++++ b/appstate/recovery.go
+@@ -49,6 +49,9 @@
+ }
+ 
+ func (proc *Processor) ProcessRecovery(ctx context.Context, recovery *waSyncdSnapshotRecovery.SyncdSnapshotRecovery) ([]Mutation, error) {
++	if err := proc.DrainAppStateDelivery(ctx); err != nil {
++		return nil, err
++	}
+ 	if len(recovery.GetCollectionLthash()) != 128 {
+ 		return nil, fmt.Errorf("invalid lthash length: %d", len(recovery.GetCollectionLthash()))
+ 	}
+@@ -81,6 +84,11 @@
+ 			PatchVersion: version,
+ 		}
+ 	}
++	if proc.DeliveryConsumer != nil {
++		out := &patchOutput{Mutations: mutations, AddedMACs: macs}
++		err := proc.commitDelivery(ctx, WAPatchName(name), HashState{}, HashState{Version: version, Hash: *(*[128]byte)(recovery.GetCollectionLthash())}, out, 0, "recovery")
++		return out.Mutations, err
++	}
+ 	err := proc.Store.AppState.DeleteAppStateVersion(ctx, name)
+ 	if err != nil {
+ 		return mutations, fmt.Errorf("failed to reset app state version in database: %w", err)
+--- /dev/null
++++ b/appstate_delivery.go
+@@ -0,0 +1,142 @@
++// Copyright (c) 2026 The wacli contributors
++// SPDX-License-Identifier: MPL-2.0
++package whatsmeow
++
++import (
++	"context"
++	"fmt"
++	"go.mau.fi/whatsmeow/appstate"
++	waBinary "go.mau.fi/whatsmeow/binary"
++	"go.mau.fi/whatsmeow/proto/waServerSync"
++	"go.mau.fi/whatsmeow/store"
++	"go.mau.fi/whatsmeow/types"
++	"sync"
++	"time"
++)
++
++// SetAppStateDeliveryConsumer opts into the native one-slot durable handoff.
++// Call before connecting. The consumer must durably commit its projection and
++// checkpoint, must not reenter SDK producers or wait for asynchronous callbacks.
++func (cli *Client) SetAppStateDeliveryConsumer(consumer func(context.Context, *store.AppStateDelivery) error) error {
++	if consumer != nil && cli.Store.ID != nil {
++		if _, ok := cli.Store.AppState.(store.AppStateDeliveryStore); !ok {
++			return fmt.Errorf("app state store has no native delivery capability")
++		}
++	}
++	if consumer == nil {
++		cli.appStateProc.DeliveryConsumer = nil
++	} else {
++		cli.appStateProc.DeliveryConsumer = func(ctx context.Context, d *store.AppStateDelivery) error {
++			if err := cli.persistCoveredSDKDeliveryState(ctx, d); err != nil {
++				return err
++			}
++			return consumer(ctx, d)
++		}
++	}
++	return nil
++}
++
++// DrainAppStateDelivery projects a pending committed payload before subsequent
++// consumption. No network traffic is performed by the SDK through this method.
++func (cli *Client) DrainAppStateDelivery(ctx context.Context) error {
++	if err := cli.appStateSyncLock.Lock(ctx); err != nil {
++		return err
++	}
++	defer cli.appStateSyncLock.Unlock()
++	return cli.appStateProc.DrainAppStateDelivery(ctx)
++}
++
++// queryAppState separates producer logic from IQ transport in package tests.
++// Production uses the normal IQ transport.
++func (cli *Client) queryAppState(ctx context.Context, q infoQuery) (*waBinary.Node, error) {
++	if cli.appStateQuery != nil {
++		return cli.appStateQuery(ctx, q)
++	}
++	return cli.sendIQ(ctx, q)
++}
++
++// Covered SDK cache writes share the durable replay owner. Otherwise a crash
++// after checkpoint/ack but before collector construction could strand those
++// settings, and a delayed old collector could overwrite a newer SDK cache.
++func (cli *Client) persistCoveredSDKDeliveryState(ctx context.Context, d *store.AppStateDelivery) error {
++	mutations, err := appstate.DecodeDeliveryMutations(d.Transition.Payload)
++	if err != nil {
++		return err
++	}
++	for _, m := range mutations {
++		if m.Operation != waServerSync.SyncdMutation_SET || m.Action == nil || len(m.Index) < 2 {
++			continue
++		}
++		if m.Index[0] != appstate.IndexArchive && m.Index[0] != appstate.IndexPin && m.Index[0] != appstate.IndexMute {
++			continue
++		}
++		jid, err := types.ParseJID(m.Index[1])
++		if err != nil {
++			return err
++		}
++		if cli.Store.ChatSettings == nil {
++			return fmt.Errorf("covered SDK chat settings store unavailable")
++		}
++		switch m.Index[0] {
++		case appstate.IndexArchive:
++			if m.Action.ArchiveChatAction == nil {
++				return fmt.Errorf("missing archive action")
++			}
++			err = cli.Store.ChatSettings.PutArchived(ctx, jid, m.Action.GetArchiveChatAction().GetArchived())
++		case appstate.IndexPin:
++			if m.Action.PinAction == nil {
++				return fmt.Errorf("missing pin action")
++			}
++			err = cli.Store.ChatSettings.PutPinned(ctx, jid, m.Action.GetPinAction().GetPinned())
++		case appstate.IndexMute:
++			action := m.Action.GetMuteAction()
++			if action == nil {
++				return fmt.Errorf("missing mute action")
++			}
++			var until time.Time
++			if action.GetMuted() {
++				if action.GetMuteEndTimestamp() < 0 {
++					until = store.MutedForever
++				} else {
++					until = time.UnixMilli(action.GetMuteEndTimestamp())
++				}
++			}
++			err = cli.Store.ChatSettings.PutMutedUntil(ctx, jid, until)
++		}
++		if err != nil {
++			return fmt.Errorf("persist covered SDK chat settings: %w", err)
++		}
++	}
++	return nil
++}
++
++// appStateProducerLock permits canceled callers to leave without waiting for a
++// different fetch/send's network deadline. The channel is initialized once.
++type appStateProducerLock struct {
++	mu   sync.Mutex
++	gate chan struct{}
++}
++
++func (l *appStateProducerLock) Lock(ctx context.Context) error {
++	if err := ctx.Err(); err != nil {
++		return err
++	}
++	l.mu.Lock()
++	if l.gate == nil {
++		l.gate = make(chan struct{}, 1)
++		l.gate <- struct{}{}
++	}
++	gate := l.gate
++	l.mu.Unlock()
++	select {
++	case <-ctx.Done():
++		return ctx.Err()
++	case <-gate:
++		if err := ctx.Err(); err != nil {
++			gate <- struct{}{}
++			return err
++		}
++		return nil
++	}
++}
++func (l *appStateProducerLock) Unlock() { l.gate <- struct{}{} }
+--- /dev/null
++++ b/appstate_delivery_crash_test.go
+@@ -0,0 +1,136 @@
++// Copyright (c) 2026 The wacli contributors
++// SPDX-License-Identifier: MPL-2.0
++package whatsmeow
++
++import (
++	"bufio"
++	"context"
++	"database/sql"
++	"fmt"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"runtime"
++	"syscall"
++	"testing"
++	"time"
++
++	"github.com/mattn/go-sqlite3"
++	"go.mau.fi/whatsmeow/store"
++)
++
++func TestNativeDeliveryTransactionProcessCrash(t *testing.T) {
++	if runtime.GOOS == "windows" {
++		t.Skip("requires Unix SIGKILL status")
++	}
++	dir := t.TempDir()
++	for _, stage := range []string{"produce", "restart"} {
++		exe, err := os.Executable()
++		if err != nil {
++			t.Fatal(err)
++		}
++		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
++		cmd := exec.CommandContext(ctx, exe, "-test.run=^TestNativeDeliveryTransactionWorker$", "-test.v")
++		cmd.Env = append(os.Environ(), "SDK_TX_DIR="+dir, "SDK_TX_STAGE="+stage)
++		input, err := cmd.StdinPipe()
++		if err != nil {
++			t.Fatal(err)
++		}
++		out, err := cmd.StdoutPipe()
++		if err != nil {
++			t.Fatal(err)
++		}
++		cmd.Stderr = os.Stderr
++		if err = cmd.Start(); err != nil {
++			t.Fatal(err)
++		}
++		scan := bufio.NewScanner(out)
++		barrier := false
++		for scan.Scan() {
++			line := scan.Text()
++			t.Log(line)
++			if line == "SDK_TX_BARRIER" {
++				barrier = true
++				break
++			}
++		}
++		if err = scan.Err(); err != nil {
++			t.Fatal(err)
++		}
++		if stage == "produce" {
++			if !barrier {
++				t.Fatal("missing native transaction barrier")
++			}
++			if err = cmd.Process.Kill(); err != nil {
++				t.Fatal(err)
++			}
++			err = cmd.Wait()
++			status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
++			if err == nil || !ok || !status.Signaled() || status.Signal() != syscall.SIGKILL {
++				t.Fatalf("not SIGKILL: %v", cmd.ProcessState)
++			}
++		} else if err = cmd.Wait(); err != nil {
++			t.Fatal(err)
++		}
++		_ = input.Close()
++		cancel()
++	}
++}
++func TestNativeDeliveryTransactionWorker(t *testing.T) {
++	dir := os.Getenv("SDK_TX_DIR")
++	if dir == "" {
++		t.Skip("subprocess helper")
++	}
++	// This fixture driver changes only the temporary SQL connection, not the
++	// native SQLStore transaction. The trigger pauses after cursor/MAC writes.
++	sql.Register("delivery-crash-sqlite", &sqlite3.SQLiteDriver{ConnectHook: func(c *sqlite3.SQLiteConn) error {
++		return c.RegisterFunc("fixture_pause", func() int {
++			fmt.Println("SDK_TX_BARRIER")
++			var b [1]byte
++			_, e := os.Stdin.Read(b[:])
++			panic(fmt.Sprintf("parent released barrier without kill: %v", e))
++		}, false)
++	}})
++	path := filepath.Join(dir, "session.db")
++	device := deliveryTestDevice(t, path)
++	native := device.AppState.(store.AppStateDeliveryStore)
++	must := func(err error) {
++		t.Helper()
++		if err != nil {
++			t.Fatal(err)
++		}
++	}
++	ctx := t.Context()
++	raw, err := sql.Open("sqlite3", "file:"+path+"?_foreign_keys=on")
++	must(err)
++	defer raw.Close()
++	transition := store.AppStateTransition{Name: "regular_low", Kind: "delta", AfterVersion: 1, Payload: []byte("synthetic payload"), AddedMACs: []store.AppStateMutationMAC{{IndexMAC: make([]byte, 32), ValueMAC: make([]byte, 32)}}}
++	transition.AfterHash[0] = 1
++	if os.Getenv("SDK_TX_STAGE") == "restart" {
++		v, h, e := device.AppState.GetAppStateVersion(ctx, transition.Name)
++		must(e)
++		pending, e := native.PendingAppStateDelivery(ctx)
++		must(e)
++		var macs, identityRows int
++		must(raw.QueryRow("SELECT COUNT(*) FROM whatsmeow_app_state_mutation_macs").Scan(&macs))
++		must(raw.QueryRow("SELECT COUNT(*) FROM whatsmeow_app_state_delivery").Scan(&identityRows))
++		if v != 0 || h != ([128]byte{}) || pending != nil || macs != 0 || identityRows != 0 {
++			t.Fatalf("partial native commit: cursor=%d pending=%+v macs=%d identities=%d", v, pending, macs, identityRows)
++		}
++		_, e = raw.Exec("DROP TRIGGER crash_sdk_tx")
++		must(e)
++		d, e := native.StageAppStateDelivery(ctx, transition)
++		must(e)
++		if d.ID.Sequence != 1 {
++			t.Fatal("rollback advanced identity")
++		}
++		must(native.AckAppStateDelivery(ctx, d.ID))
++		fmt.Println("SDK_TX_ROLLBACK_AND_RETRY_OK")
++		return
++	}
++	_, err = raw.Exec(`CREATE TRIGGER crash_sdk_tx BEFORE UPDATE OF payload ON whatsmeow_app_state_delivery BEGIN SELECT fixture_pause(); END`)
++	must(err)
++	_, err = native.StageAppStateDelivery(ctx, transition)
++	must(err)
++	t.Fatal("native transaction passed crash barrier")
++}
+--- /dev/null
++++ b/appstate_delivery_snapshot_test.go
+@@ -0,0 +1,360 @@
++// Copyright (c) 2026 The wacli contributors
++// SPDX-License-Identifier: MPL-2.0
++package whatsmeow
++
++import (
++	"bytes"
++	"compress/gzip"
++	"context"
++	"encoding/json"
++	"fmt"
++	"path/filepath"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"go.mau.fi/whatsmeow/appstate"
++	waBinary "go.mau.fi/whatsmeow/binary"
++	"go.mau.fi/whatsmeow/proto/waE2E"
++	"go.mau.fi/whatsmeow/proto/waServerSync"
++	"go.mau.fi/whatsmeow/proto/waSyncAction"
++	"go.mau.fi/whatsmeow/proto/waSyncdSnapshotRecovery"
++	"go.mau.fi/whatsmeow/store"
++	"go.mau.fi/whatsmeow/types"
++	log "go.mau.fi/whatsmeow/util/log"
++	"google.golang.org/protobuf/proto"
++)
++
++func TestDurableSnapshotReplacementFailureAndPendingGate(t *testing.T) {
++	ctx := t.Context()
++	must := func(err error) {
++		t.Helper()
++		if err != nil {
++			t.Fatal(err)
++		}
++	}
++	device := deliveryTestDevice(t, filepath.Join(t.TempDir(), "client.db"))
++	cli := NewClient(device, log.Noop)
++	col := appstate.WAPatchRegularLow
++	jid := types.NewJID("456", types.DefaultUserServer)
++	fail := false
++	var deliveries []store.AppStateDeliveryID
++	must(cli.SetAppStateDeliveryConsumer(func(ctx context.Context, d *store.AppStateDelivery) error {
++		if fail {
++			return fmt.Errorf("synthetic projection unavailable")
++		}
++		deliveries = append(deliveries, d.ID)
++		return nil
++	}))
++	snapshot := func(pin bool) *waServerSync.SyncdSnapshot {
++		source := deliveryTestDevice(t, filepath.Join(t.TempDir(), "source.db"))
++		encoded, e := appstate.NewProcessor(source, log.Noop).EncodePatch(ctx, []byte{1}, appstate.HashState{}, appstate.BuildPin(jid, pin))
++		must(e)
++		p := &waServerSync.SyncdPatch{}
++		must(proto.Unmarshal(encoded, p))
++		return &waServerSync.SyncdSnapshot{Version: &waServerSync.SyncdVersion{Version: proto.Uint64(1)}, Records: []*waServerSync.SyncdRecord{p.Mutations[0].Record}, Mac: p.SnapshotMAC, KeyID: p.KeyID}
++	}
++	current := snapshot(true)
++	queries := 0
++	cli.appStateBlobDownload = func(context.Context, *waServerSync.ExternalBlobReference) ([]byte, error) {
++		return proto.Marshal(current)
++	}
++	ref, e := proto.Marshal(&waServerSync.ExternalBlobReference{})
++	must(e)
++	cli.appStateQuery = func(context.Context, infoQuery) (*waBinary.Node, error) {
++		queries++
++		return &waBinary.Node{Tag: "iq", Content: []waBinary.Node{{Tag: "sync", Content: []waBinary.Node{{Tag: "collection", Attrs: waBinary.Attrs{"name": string(col)}, Content: []waBinary.Node{{Tag: "snapshot", Content: ref}}}}}}}, nil
++	}
++	must(cli.FetchAppState(ctx, col, true, false))
++	first := deliveries[0]
++	current = snapshot(false)
++	must(cli.FetchAppState(ctx, col, true, false))
++	second := deliveries[1]
++	if first.Generation != second.Generation || first.Sequence+1 != second.Sequence || first.Digest == second.Digest {
++		t.Fatal("equal-version replacement identity collision")
++	}
++	version, hash, e := device.AppState.GetAppStateVersion(ctx, string(col))
++	must(e)
++	bad := proto.Clone(current).(*waServerSync.SyncdSnapshot)
++	bad.Mac[0] ^= 1
++	current = bad
++	if e = cli.FetchAppState(ctx, col, true, false); e == nil {
++		t.Fatal("corrupt replacement accepted")
++	}
++	v, h, e := device.AppState.GetAppStateVersion(ctx, string(col))
++	must(e)
++	if v != version || h != hash || len(deliveries) != 2 {
++		t.Fatal("failed full snapshot reset or projected old state")
++	}
++	current = snapshot(true)
++	fail = true
++	if e = cli.FetchAppState(ctx, col, true, false); e == nil {
++		t.Fatal("projection failure hidden")
++	}
++	native := device.AppState.(store.AppStateDeliveryStore)
++	pending, e := native.PendingAppStateDelivery(ctx)
++	must(e)
++	if pending == nil {
++		t.Fatal("failed projection lost payload")
++	}
++	before := queries
++	if e = cli.FetchAppState(ctx, col, true, false); e == nil || queries != before {
++		t.Fatal("pending projection allowed network/reset")
++	}
++	canceled, cancel := context.WithCancel(ctx)
++	cancel()
++	if e = cli.FetchAppState(canceled, col, true, false); e != context.Canceled || queries != before {
++		t.Fatalf("canceled waiter progressed: %v", e)
++	}
++	fail = false
++	must(cli.DrainAppStateDelivery(ctx))
++	pending, e = native.PendingAppStateDelivery(ctx)
++	must(e)
++	if pending != nil || len(deliveries) != 3 {
++		t.Fatal("pending projection did not retry exactly")
++	}
++}
++
++func TestDurablePeerRecoveryKeepsFreshnessGate(t *testing.T) {
++	ctx := t.Context()
++	must := func(err error) {
++		t.Helper()
++		if err != nil {
++			t.Fatal(err)
++		}
++	}
++	col := appstate.WAPatchRegularLow
++	jid := types.NewJID("456", types.DefaultUserServer)
++	source := deliveryTestDevice(t, filepath.Join(t.TempDir(), "source.db"))
++	device := deliveryTestDevice(t, filepath.Join(t.TempDir(), "client.db"))
++	cli := NewClient(device, log.Noop)
++	consumed := 0
++	must(cli.SetAppStateDeliveryConsumer(func(context.Context, *store.AppStateDelivery) error { consumed++; return nil }))
++	var first *waServerSync.SyncdPatch
++	recoveries := make(map[uint64]*waSyncdSnapshotRecovery.SyncdSnapshotRecovery)
++	for seq := uint64(1); seq <= 2; seq++ {
++		v, h, e := source.AppState.GetAppStateVersion(ctx, string(col))
++		must(e)
++		encoded, e := appstate.NewProcessor(source, log.Noop).EncodePatch(ctx, []byte{1}, appstate.HashState{Version: v, Hash: h}, appstate.BuildPin(jid, seq == 1))
++		must(e)
++		patch := &waServerSync.SyncdPatch{}
++		must(proto.Unmarshal(encoded, patch))
++		patch.Version = &waServerSync.SyncdVersion{Version: proto.Uint64(seq)}
++		mutations, state, e := appstate.NewProcessor(source, log.Noop).DecodePatches(ctx, &appstate.PatchList{Name: col, Patches: []*waServerSync.SyncdPatch{patch}}, appstate.HashState{Version: v, Hash: h}, true)
++		must(e)
++		recovery := &waSyncdSnapshotRecovery.SyncdSnapshotRecovery{CollectionName: proto.String(string(col)), Version: &waSyncdSnapshotRecovery.SyncdVersion{Version: proto.Uint64(seq)}, CollectionLthash: state.Hash[:]}
++		for _, m := range mutations {
++			index, e := json.Marshal(m.Index)
++			must(e)
++			recovery.MutationRecords = append(recovery.MutationRecords, &waSyncdSnapshotRecovery.SyncdPlainTextRecord{KeyID: m.KeyID, Mac: m.ValueMAC, Value: &waSyncAction.SyncActionData{Index: index, Value: m.Action, Version: proto.Int32(m.Version)}})
++		}
++		recoveries[seq] = recovery
++		if seq == 1 {
++			first = patch
++		}
++	}
++	var held []any
++	_, err := cli.DangerousInternals().ApplyAppStatePatches(ctx, col, appstate.HashState{}, &appstate.PatchList{Name: col, Patches: []*waServerSync.SyncdPatch{first}}, false, &held)
++	must(err)
++	reply := func(recovery *waSyncdSnapshotRecovery.SyncdSnapshotRecovery, compressed bool) {
++		t.Helper()
++		encoded, e := proto.Marshal(recovery)
++		must(e)
++		if compressed {
++			var out bytes.Buffer
++			w := gzip.NewWriter(&out)
++			_, e = w.Write(encoded)
++			must(e)
++			must(w.Close())
++			encoded = out.Bytes()
++		}
++		result := []*waE2E.PeerDataOperationRequestResponseMessage_PeerDataOperationResult{{SyncdSnapshotFatalRecoveryResponse: &waE2E.PeerDataOperationRequestResponseMessage_PeerDataOperationResult_SyncDSnapshotFatalRecoveryResponse{CollectionSnapshot: encoded, IsCompressed: proto.Bool(compressed)}}}
++		if !cli.handleAppStateRecovery(ctx, "synthetic-request", result) {
++			t.Fatal("recovery handler failed")
++		}
++	}
++	reply(recoveries[1], false)
++	if consumed != 1 {
++		t.Fatal("equal-version peer recovery bypassed freshness gate")
++	}
++	reply(recoveries[2], true)
++	if consumed != 2 {
++		t.Fatal("newer gzip peer recovery not committed")
++	}
++	version, _, err := device.AppState.GetAppStateVersion(ctx, string(col))
++	must(err)
++	if version != 2 {
++		t.Fatalf("peer cursor %d", version)
++	}
++	reply(recoveries[1], true)
++	reply(recoveries[2], false)
++	if consumed != 2 {
++		t.Fatal("older/equal peer response was reapplied")
++	}
++}
++
++func TestDurableProducerWaitIsCancelable(t *testing.T) {
++	device := deliveryTestDevice(t, filepath.Join(t.TempDir(), "client.db"))
++	cli := NewClient(device, log.Noop)
++	if err := cli.SetAppStateDeliveryConsumer(func(context.Context, *store.AppStateDelivery) error { return nil }); err != nil {
++		t.Fatal(err)
++	}
++	entered := make(chan struct{})
++	release := make(chan struct{})
++	released := false
++	defer func() {
++		if !released {
++			close(release)
++		}
++	}()
++	var queries atomic.Int32
++	cli.appStateQuery = func(ctx context.Context, q infoQuery) (*waBinary.Node, error) {
++		queries.Add(1)
++		close(entered)
++		select {
++		case <-release:
++			return &waBinary.Node{Tag: "iq"}, nil
++		case <-ctx.Done():
++			return nil, ctx.Err()
++		}
++	}
++	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
++	defer cancel()
++	first := make(chan error, 1)
++	go func() {
++		first <- cli.SendAppState(ctx, appstate.BuildPin(types.NewJID("456", types.DefaultUserServer), true))
++	}()
++	select {
++	case <-entered:
++	case <-ctx.Done():
++		t.Fatal("producer did not enter IQ transport")
++	}
++	waiting, stop := context.WithCancel(ctx)
++	result := make(chan error, 1)
++	go func() { result <- cli.FetchAppState(waiting, appstate.WAPatchRegularLow, true, false) }()
++	stop()
++	select {
++	case err := <-result:
++		if err != context.Canceled {
++			t.Fatalf("wait cancellation lost: %v", err)
++		}
++	case <-time.After(time.Second):
++		t.Fatal("canceled producer remained blocked behind IQ")
++	}
++	if queries.Load() != 1 {
++		t.Fatal("canceled producer performed IQ work")
++	}
++	close(release)
++	released = true
++	select {
++	case err := <-first:
++		if err == nil {
++			t.Fatal("malformed synthetic IQ unexpectedly succeeded")
++		}
++	case <-ctx.Done():
++		t.Fatal("first producer did not finish")
++	}
++
++}
++
++func TestDurableExplicitResetWithPatchList(t *testing.T) {
++	ctx := t.Context()
++	must := func(err error) {
++		t.Helper()
++		if err != nil {
++			t.Fatal(err)
++		}
++	}
++	col := appstate.WAPatchRegularLow
++	jid := types.NewJID("456", types.DefaultUserServer)
++	device := deliveryTestDevice(t, filepath.Join(t.TempDir(), "client.db"))
++	cli := NewClient(device, log.Noop)
++	var kinds []string
++	must(cli.SetAppStateDeliveryConsumer(func(ctx context.Context, d *store.AppStateDelivery) error {
++		kinds = append(kinds, d.Transition.Kind)
++		return nil
++	}))
++	encode := func(pin bool) *waServerSync.SyncdPatch {
++		source := deliveryTestDevice(t, filepath.Join(t.TempDir(), "source.db"))
++		data, e := appstate.NewProcessor(source, log.Noop).EncodePatch(ctx, []byte{1}, appstate.HashState{}, appstate.BuildPin(jid, pin))
++		must(e)
++		p := &waServerSync.SyncdPatch{}
++		must(proto.Unmarshal(data, p))
++		p.Version = &waServerSync.SyncdVersion{Version: proto.Uint64(1)}
++		return p
++	}
++	first := encode(true)
++	var ignored []any
++	_, err := cli.DangerousInternals().ApplyAppStatePatches(ctx, col, appstate.HashState{}, &appstate.PatchList{Name: col, Patches: []*waServerSync.SyncdPatch{first}}, false, &ignored)
++	must(err)
++	replacement := encode(false)
++	data, err := proto.Marshal(replacement)
++	must(err)
++	cli.appStateQuery = func(context.Context, infoQuery) (*waBinary.Node, error) {
++		return &waBinary.Node{Tag: "iq", Content: []waBinary.Node{{Tag: "sync", Content: []waBinary.Node{{Tag: "collection", Attrs: waBinary.Attrs{"name": string(col)}, Content: []waBinary.Node{{Tag: "patches", Content: []waBinary.Node{{Tag: "patch", Content: data}}}}}}}}}, nil
++	}
++	must(cli.FetchAppState(ctx, col, true, false))
++	settings, err := device.ChatSettings.GetChatSettings(ctx, jid)
++	must(err)
++	if settings.Pinned || len(kinds) != 2 || kinds[1] != "snapshot" {
++		t.Fatalf("from-zero reset was not a verified replacement: pin=%t kinds=%v", settings.Pinned, kinds)
++	}
++}
++
++type failingDeliveryPinStore struct {
++	store.ChatSettingsStore
++	fail bool
++}
++
++func (s *failingDeliveryPinStore) PutPinned(ctx context.Context, jid types.JID, pin bool) error {
++	if s.fail {
++		return fmt.Errorf("synthetic SDK cache failure")
++	}
++	return s.ChatSettingsStore.PutPinned(ctx, jid, pin)
++}
++func TestCoveredSDKCacheFailureKeepsPendingDelivery(t *testing.T) {
++	ctx := t.Context()
++	device := deliveryTestDevice(t, filepath.Join(t.TempDir(), "client.db"))
++	chatStore := &failingDeliveryPinStore{ChatSettingsStore: device.ChatSettings, fail: true}
++	device.ChatSettings = chatStore
++	cli := NewClient(device, log.Noop)
++	consumed := 0
++	if err := cli.SetAppStateDeliveryConsumer(func(context.Context, *store.AppStateDelivery) error { consumed++; return nil }); err != nil {
++		t.Fatal(err)
++	}
++	jid := types.NewJID("456", types.DefaultUserServer)
++	encoded, err := appstate.NewProcessor(device, log.Noop).EncodePatch(ctx, []byte{1}, appstate.HashState{}, appstate.BuildPin(jid, true))
++	if err != nil {
++		t.Fatal(err)
++	}
++	patch := &waServerSync.SyncdPatch{}
++	if err = proto.Unmarshal(encoded, patch); err != nil {
++		t.Fatal(err)
++	}
++	patch.Version = &waServerSync.SyncdVersion{Version: proto.Uint64(1)}
++	var held []any
++	_, err = cli.DangerousInternals().ApplyAppStatePatches(ctx, appstate.WAPatchRegularLow, appstate.HashState{}, &appstate.PatchList{Name: appstate.WAPatchRegularLow, Patches: []*waServerSync.SyncdPatch{patch}}, false, &held)
++	native := device.AppState.(store.AppStateDeliveryStore)
++	pending, e := native.PendingAppStateDelivery(ctx)
++	if e != nil {
++		t.Fatal(e)
++	}
++	if err == nil || pending == nil || consumed != 0 || len(held) != 0 {
++		t.Fatalf("failed SDK cache write consumed delivery: err=%v pending=%+v consumed=%d held=%d", err, pending, consumed, len(held))
++	}
++	chatStore.fail = false
++	if err = cli.DrainAppStateDelivery(ctx); err != nil {
++		t.Fatal(err)
++	}
++	pending, e = native.PendingAppStateDelivery(ctx)
++	if e != nil {
++		t.Fatal(e)
++	}
++	settings, e := device.ChatSettings.GetChatSettings(ctx, jid)
++	if e != nil {
++		t.Fatal(e)
++	}
++	if pending != nil || consumed != 1 || !settings.Pinned {
++		t.Fatal("pending SDK cache write was not repaired before ack")
++	}
++}
+--- /dev/null
++++ b/appstate_delivery_test.go
+@@ -0,0 +1,222 @@
++// Copyright (c) 2026 The wacli contributors
++// SPDX-License-Identifier: MPL-2.0
++package whatsmeow
++
++import (
++	"context"
++	"database/sql"
++	"errors"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++
++	_ "github.com/mattn/go-sqlite3"
++	"go.mau.fi/whatsmeow/appstate"
++	waBinary "go.mau.fi/whatsmeow/binary"
++	"go.mau.fi/whatsmeow/proto/waAdv"
++	"go.mau.fi/whatsmeow/proto/waServerSync"
++	"go.mau.fi/whatsmeow/store"
++	"go.mau.fi/whatsmeow/store/sqlstore"
++	"go.mau.fi/whatsmeow/types"
++	log "go.mau.fi/whatsmeow/util/log"
++	"google.golang.org/protobuf/proto"
++)
++
++func deliveryTestDevice(t *testing.T, path string) *store.Device {
++	t.Helper()
++	var c *sqlstore.Container
++	var err error
++	if os.Getenv("SDK_TX_DIR") != "" {
++		var db *sql.DB
++		db, err = sql.Open("delivery-crash-sqlite", "file:"+path+"?_foreign_keys=on&_synchronous=FULL")
++		if err == nil {
++			c = sqlstore.NewWithDB(db, "sqlite3", log.Noop)
++			err = c.Upgrade(t.Context())
++		}
++	} else {
++		c, err = sqlstore.New(t.Context(), "sqlite3", "file:"+path+"?_foreign_keys=on&_synchronous=FULL", log.Noop)
++	}
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = c.Close() })
++	d, err := c.GetFirstDevice(t.Context())
++	if err != nil {
++		t.Fatal(err)
++	}
++	if d.ID == nil {
++		d.ID = &types.JID{User: "15550000000", Device: 7, Server: types.DefaultUserServer}
++		d.Account = &waAdv.ADVSignedDeviceIdentity{Details: []byte{1}, AccountSignature: make([]byte, 64), AccountSignatureKey: make([]byte, 32), DeviceSignature: make([]byte, 64)}
++		if err = d.Save(t.Context()); err != nil {
++			t.Fatal(err)
++		}
++	}
++	if err = d.AppStateKeys.PutAppStateSyncKey(t.Context(), []byte{1}, store.AppStateSyncKey{Data: []byte(strings.Repeat("s", 32)), Fingerprint: []byte{1}, Timestamp: 1700000000000}); err != nil {
++		t.Fatal(err)
++	}
++	return d
++}
++
++// The real SendAppState/EncodePatch/DecodePatches path is used. Only the IQ
++// transport is substituted; the synthetic server validates the signed request.
++func TestDurableAppStateSendProducer(t *testing.T) {
++	for _, mode := range []string{"success", "conflict", "reject", "malformed", "cancel", "accepted-stage-failure"} {
++		t.Run(mode, func(t *testing.T) {
++			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
++			defer cancel()
++			dir := t.TempDir()
++			path := filepath.Join(dir, "client.db")
++			device := deliveryTestDevice(t, path)
++			server := deliveryTestDevice(t, filepath.Join(dir, "server.db"))
++			cli := NewClient(device, log.Noop)
++			collection := appstate.WAPatchRegularLow
++			jid := types.NewJID("456", types.DefaultUserServer)
++			must := func(err error) {
++				t.Helper()
++				if err != nil {
++					t.Fatal(err)
++				}
++			}
++			var consumed []uint64
++			must(cli.SetAppStateDeliveryConsumer(func(ctx context.Context, d *store.AppStateDelivery) error {
++				records, err := appstate.DecodeDeliveryMutations(d.Transition.Payload)
++				if err != nil {
++					return err
++				}
++				if len(records) != 1 || records[0].Index[0] != appstate.IndexPin {
++					t.Fatalf("unexpected verified payload: %+v", records)
++				}
++				consumed = append(consumed, d.Transition.AfterVersion)
++				return nil
++			}))
++			var patches []*waServerSync.SyncdPatch
++			serverApply := func(p *waServerSync.SyncdPatch) {
++				t.Helper()
++				v, h, e := server.AppState.GetAppStateVersion(ctx, string(collection))
++				must(e)
++				_, _, e = appstate.NewProcessor(server, log.Noop).DecodePatches(ctx, &appstate.PatchList{Name: collection, Patches: []*waServerSync.SyncdPatch{p}}, appstate.HashState{Version: v, Hash: h}, true)
++				must(e)
++				patches = append(patches, p)
++			}
++			if mode == "conflict" {
++				encoded, e := appstate.NewProcessor(server, log.Noop).EncodePatch(ctx, []byte{1}, appstate.HashState{}, appstate.BuildPin(jid, false))
++				must(e)
++				p := &waServerSync.SyncdPatch{}
++				must(proto.Unmarshal(encoded, p))
++				p.Version = &waServerSync.SyncdVersion{Version: proto.Uint64(1)}
++				serverApply(p)
++			}
++			attempts, accepted, fetches := 0, 0, 0
++			cli.appStateQuery = func(ctx context.Context, q infoQuery) (*waBinary.Node, error) {
++				col := q.Content.([]waBinary.Node)[0].GetChildByTag("collection")
++				patchNode := col.GetChildByTag("patch")
++				out := waBinary.Node{Tag: "collection", Attrs: waBinary.Attrs{"name": string(collection)}}
++				if patchNode.Tag == "patch" {
++					attempts++
++					switch mode {
++					case "cancel":
++						return nil, context.Canceled
++					case "reject":
++						out.Attrs["type"] = "error"
++						out.Content = []waBinary.Node{{Tag: "error", Attrs: waBinary.Attrs{"code": "500"}}}
++					case "malformed":
++						return &waBinary.Node{Tag: "iq"}, nil
++					default:
++						base, _ := col.Attrs["version"].(uint64)
++						version, _, e := server.AppState.GetAppStateVersion(ctx, string(collection))
++						if e != nil {
++							return nil, e
++						}
++						if base != version {
++							out.Attrs["type"] = "error"
++							var nodes []waBinary.Node
++							for _, p := range patches {
++								encoded, e := proto.Marshal(p)
++								if e != nil {
++									return nil, e
++								}
++								nodes = append(nodes, waBinary.Node{Tag: "patch", Content: encoded})
++							}
++							out.Content = []waBinary.Node{{Tag: "error", Attrs: waBinary.Attrs{"code": "409"}}, {Tag: "patches", Content: nodes}}
++						} else {
++							raw, ok := patchNode.Content.([]byte)
++							if !ok {
++								t.Fatal("missing signed request")
++							}
++							p := &waServerSync.SyncdPatch{}
++							if e = proto.Unmarshal(raw, p); e != nil {
++								return nil, e
++							}
++							p.Version = &waServerSync.SyncdVersion{Version: proto.Uint64(base + 1)}
++							serverApply(p)
++							accepted++
++						}
++					}
++				} else {
++					fetches++
++					base, _ := col.Attrs["version"].(uint64)
++					var nodes []waBinary.Node
++					for _, p := range patches {
++						if p.GetVersion().GetVersion() > base {
++							encoded, e := proto.Marshal(p)
++							if e != nil {
++								return nil, e
++							}
++							nodes = append(nodes, waBinary.Node{Tag: "patch", Content: encoded})
++						}
++					}
++					out.Content = []waBinary.Node{{Tag: "patches", Content: nodes}}
++				}
++				return &waBinary.Node{Tag: "iq", Content: []waBinary.Node{{Tag: "sync", Content: []waBinary.Node{out}}}}, nil
++			}
++			raw, e := sql.Open("sqlite3", "file:"+path+"?_foreign_keys=on&_synchronous=FULL")
++			must(e)
++			defer raw.Close()
++			if mode == "accepted-stage-failure" {
++				_, e = raw.Exec(`CREATE TRIGGER fail_cursor BEFORE INSERT ON whatsmeow_app_state_version BEGIN SELECT RAISE(FAIL,'synthetic accepted stage failure'); END`)
++				must(e)
++			}
++			err := cli.SendAppState(ctx, appstate.BuildPin(jid, true))
++			pending, e := device.AppState.(store.AppStateDeliveryStore).PendingAppStateDelivery(ctx)
++			must(e)
++			version, _, e := device.AppState.GetAppStateVersion(ctx, string(collection))
++			must(e)
++			if mode == "success" || mode == "conflict" {
++				must(err)
++				want := uint64(1)
++				if mode == "conflict" {
++					want = 2
++				}
++				if version != want || accepted != 1 || uint64(len(consumed)) != want || pending != nil || fetches != 1 {
++					t.Fatalf("cursor=%d accepts=%d consumed=%v pending=%+v fetches=%d", version, accepted, consumed, pending, fetches)
++				}
++			} else {
++				if err == nil || version != 0 || len(consumed) != 0 || pending != nil {
++					t.Fatalf("failure consumed state: err=%v cursor=%d consumed=%v pending=%+v", err, version, consumed, pending)
++				}
++				if mode == "cancel" && !errors.Is(err, context.Canceled) {
++					t.Fatalf("cancellation lost: %v", err)
++				}
++				if mode == "accepted-stage-failure" {
++					if accepted != 1 || !strings.Contains(err.Error(), "accepted; local persistence incomplete") {
++						t.Fatalf("acceptance hidden: %v", err)
++					}
++					must(cli.DrainAppStateDelivery(ctx))
++					if len(consumed) != 0 {
++						t.Fatal("drain invented a missing payload")
++					}
++					_, e = raw.Exec("DROP TRIGGER fail_cursor")
++					must(e)
++					must(cli.FetchAppState(ctx, collection, false, false))
++					if attempts != 1 || accepted != 1 || len(consumed) != 1 {
++						t.Fatalf("refetch resent or failed: attempts=%d accepts=%d consumed=%v", attempts, accepted, consumed)
++					}
++				} else if accepted != 0 {
++					t.Fatal("rejected request accepted")
++				}
++			}
++		})
++	}
++}
+--- a/client.go
++++ b/client.go
+@@ -101,8 +101,10 @@
+ 	pendingPhoneRerequests             map[types.MessageID]context.CancelFunc
+ 	pendingPhoneRerequestsLock         sync.RWMutex
+ 
+-	appStateProc     *appstate.Processor
+-	appStateSyncLock sync.Mutex
++	appStateProc         *appstate.Processor
++	appStateSyncLock     appStateProducerLock
++	appStateQuery        func(context.Context, infoQuery) (*waBinary.Node, error)
++	appStateBlobDownload appstate.DownloadExternalFunc
+ 
+ 	historySyncNotifications        chan *waE2E.HistorySyncNotification
+ 	historySyncHandlerStarted       atomic.Bool
+--- /dev/null
++++ b/store/appstate_delivery.go
+@@ -0,0 +1,49 @@
++// Copyright (c) 2026 The wacli contributors
++// SPDX-License-Identifier: MPL-2.0
++package store
++
++import (
++	"context"
++	"errors"
++)
++
++// MaxAppStateDeliveryBytes bounds the one outstanding payload before consumption.
++const MaxAppStateDeliveryBytes = 8 << 20
++
++var ErrAppStateDeliveryPending = errors.New("app state projection pending")
++var ErrAppStateDeliveryIdentity = errors.New("app state delivery identity mismatch")
++
++// AppStateDeliveryID identifies local consumption, independently of protocol
++// versions, which may repeat or move backwards during explicit replacement.
++type AppStateDeliveryID struct {
++	Generation string
++	Sequence   uint64
++	Digest     [32]byte
++}
++
++// AppStateTransition describes an already verified protocol transition. Payload
++// is a versioned consumer envelope. Kind is delta, snapshot, recovery or reset.
++// Before is checked inside the same native transaction that stages the payload.
++type AppStateTransition struct {
++	Name, Kind                  string
++	BeforeVersion, AfterVersion uint64
++	BeforeHash, AfterHash       [128]byte
++	Payload                     []byte
++	RemovedMACs                 [][]byte
++	AddedMACs                   []AppStateMutationMAC
++}
++
++type AppStateDelivery struct {
++	ID         AppStateDeliveryID
++	Transition AppStateTransition
++}
++
++// AppStateDeliveryStore is opt-in. Implementations must atomically persist the
++// payload with cursor/hash/MAC/reset, allow only one outstanding delivery per
++// device store, and never acknowledge a different generation/sequence/digest.
++// Acknowledgment means consumer checkpoint durability, not a WhatsApp receipt.
++type AppStateDeliveryStore interface {
++	StageAppStateDelivery(context.Context, AppStateTransition) (*AppStateDelivery, error)
++	PendingAppStateDelivery(context.Context) (*AppStateDelivery, error)
++	AckAppStateDelivery(context.Context, AppStateDeliveryID) error
++}
+--- /dev/null
++++ b/store/sqlstore/appstate_delivery.go
+@@ -0,0 +1,163 @@
++// Copyright (c) 2026 The wacli contributors
++// SPDX-License-Identifier: MPL-2.0
++package sqlstore
++
++import (
++	"context"
++	"crypto/rand"
++	"crypto/sha256"
++	"database/sql"
++	"encoding/hex"
++	"errors"
++	"fmt"
++	"math"
++
++	"go.mau.fi/util/dbutil"
++	"go.mau.fi/whatsmeow/store"
++)
++
++func (s *SQLStore) StageAppStateDelivery(ctx context.Context, t store.AppStateTransition) (*store.AppStateDelivery, error) {
++	if _, nested := s.db.Execable(ctx).(dbutil.Transaction); nested {
++		return nil, fmt.Errorf("app state staging requires its own committed transaction")
++	}
++	if len(t.Payload) == 0 || len(t.Payload) > store.MaxAppStateDeliveryBytes {
++		return nil, fmt.Errorf("invalid app state payload size %d", len(t.Payload))
++	}
++	if t.Name == "" || t.BeforeVersion > math.MaxInt64 || t.AfterVersion > math.MaxInt64 {
++		return nil, fmt.Errorf("invalid app state transition")
++	}
++	switch t.Kind {
++	case "delta", "snapshot", "recovery":
++		if t.AfterVersion == 0 {
++			return nil, fmt.Errorf("zero app state version")
++		}
++	case "reset":
++		if t.AfterVersion != 0 || t.AfterHash != ([128]byte{}) {
++			return nil, fmt.Errorf("invalid app state reset")
++		}
++	default:
++		return nil, fmt.Errorf("unknown app state replacement kind")
++	}
++	if t.Kind == "delta" && t.AfterVersion <= t.BeforeVersion {
++		return nil, fmt.Errorf("non-advancing app state delta")
++	}
++	digest := sha256.Sum256(t.Payload)
++	var entropy [16]byte
++	if _, err := rand.Read(entropy[:]); err != nil {
++		return nil, err
++	}
++	delivery := &store.AppStateDelivery{Transition: t}
++	err := s.db.DoTxn(ctx, nil, func(ctx context.Context) error {
++		if err := s.requireDurableAppStateTransaction(ctx); err != nil {
++			return err
++		}
++		_, err := s.db.Exec(ctx, `INSERT INTO whatsmeow_app_state_delivery(jid,generation,sequence) VALUES($1,$2,0) ON CONFLICT(jid) DO NOTHING`, s.JID, hex.EncodeToString(entropy[:]))
++		if err != nil {
++			return err
++		}
++		// UPDATE locks the per-device row on both SQLite and PostgreSQL before
++		// observing cursor state. A pending payload prevents any second delivery.
++		err = s.db.QueryRow(ctx, `UPDATE whatsmeow_app_state_delivery SET sequence=sequence+1 WHERE jid=$1 AND payload IS NULL AND sequence<$2 RETURNING generation,sequence`, s.JID, int64(math.MaxInt64)).Scan(&delivery.ID.Generation, &delivery.ID.Sequence)
++		if errors.Is(err, sql.ErrNoRows) {
++			return store.ErrAppStateDeliveryPending
++		}
++		if err != nil {
++			return err
++		}
++		version, hash, err := s.GetAppStateVersion(ctx, t.Name)
++		if err != nil {
++			return err
++		}
++		if version != t.BeforeVersion || hash != t.BeforeHash {
++			return fmt.Errorf("app state transition base changed")
++		}
++		if t.Kind != "delta" {
++			if err = s.DeleteAppStateVersion(ctx, t.Name); err != nil {
++				return err
++			}
++		}
++		if t.Kind != "reset" {
++			if err = s.PutAppStateVersion(ctx, t.Name, t.AfterVersion, t.AfterHash); err != nil {
++				return err
++			}
++			if err = s.DeleteAppStateMutationMACs(ctx, t.Name, t.RemovedMACs); err != nil {
++				return err
++			}
++			for _, m := range t.AddedMACs {
++				_, err = s.db.Exec(ctx, `INSERT INTO whatsmeow_app_state_mutation_macs(jid,name,version,index_mac,value_mac) VALUES($1,$2,$3,$4,$5) ON CONFLICT(jid,name,version,index_mac) DO UPDATE SET value_mac=excluded.value_mac`, s.JID, t.Name, t.AfterVersion, m.IndexMAC, m.ValueMAC)
++				if err != nil {
++					return err
++				}
++			}
++		}
++		_, err = s.db.Exec(ctx, `UPDATE whatsmeow_app_state_delivery SET name=$2,kind=$3,before_version=$4,after_version=$5,before_hash=$6,after_hash=$7,digest=$8,payload=$9 WHERE jid=$1`, s.JID, t.Name, t.Kind, t.BeforeVersion, t.AfterVersion, t.BeforeHash[:], t.AfterHash[:], digest[:], t.Payload)
++		return err
++	})
++	if err != nil {
++		return nil, err
++	}
++	delivery.ID.Digest = digest
++	return delivery, nil
++}
++
++func (s *SQLStore) PendingAppStateDelivery(ctx context.Context) (*store.AppStateDelivery, error) {
++	d := &store.AppStateDelivery{}
++	var before, after, digest []byte
++	err := s.db.QueryRow(ctx, `SELECT generation,sequence,name,kind,before_version,after_version,before_hash,after_hash,digest,payload FROM whatsmeow_app_state_delivery WHERE jid=$1 AND payload IS NOT NULL`, s.JID).Scan(&d.ID.Generation, &d.ID.Sequence, &d.Transition.Name, &d.Transition.Kind, &d.Transition.BeforeVersion, &d.Transition.AfterVersion, &before, &after, &digest, &d.Transition.Payload)
++	if errors.Is(err, sql.ErrNoRows) {
++		return nil, nil
++	}
++	if err != nil {
++		return nil, err
++	}
++	if len(before) != 128 || len(after) != 128 || len(digest) != 32 || len(d.Transition.Payload) > store.MaxAppStateDeliveryBytes {
++		return nil, fmt.Errorf("invalid saved app state delivery")
++	}
++	copy(d.Transition.BeforeHash[:], before)
++	copy(d.Transition.AfterHash[:], after)
++	copy(d.ID.Digest[:], digest)
++	if sha256.Sum256(d.Transition.Payload) != d.ID.Digest {
++		return nil, fmt.Errorf("app state delivery digest mismatch")
++	}
++	return d, nil
++}
++
++func (s *SQLStore) AckAppStateDelivery(ctx context.Context, id store.AppStateDeliveryID) error {
++	if _, nested := s.db.Execable(ctx).(dbutil.Transaction); nested {
++		return fmt.Errorf("app state acknowledgment requires its own committed transaction")
++	}
++	// Retain generation, sequence and digest after acknowledgment. Repeating an
++	// exact ack is harmless; an old ack cannot delete a later pending delivery.
++	return s.db.DoTxn(ctx, nil, func(ctx context.Context) error {
++		if err := s.requireDurableAppStateTransaction(ctx); err != nil {
++			return err
++		}
++		result, err := s.db.Exec(ctx, `UPDATE whatsmeow_app_state_delivery SET payload=NULL WHERE jid=$1 AND generation=$2 AND sequence=$3 AND digest=$4`, s.JID, id.Generation, id.Sequence, id.Digest[:])
++		if err != nil {
++			return err
++		}
++		n, err := result.RowsAffected()
++		if err != nil {
++			return err
++		}
++		if n != 1 {
++			return store.ErrAppStateDeliveryIdentity
++		}
++		return nil
++	})
++}
++
++var _ store.AppStateDeliveryStore = (*SQLStore)(nil)
++
++func (s *SQLStore) requireDurableAppStateTransaction(ctx context.Context) error {
++	if s.db.Dialect == dbutil.SQLite {
++		var level int
++		if err := s.db.QueryRow(ctx, "PRAGMA synchronous").Scan(&level); err != nil {
++			return err
++		}
++		if level < 2 {
++			return fmt.Errorf("durable app state handoff requires SQLite synchronous FULL or EXTRA")
++		}
++	}
++	return nil
++}
+--- /dev/null
++++ b/store/sqlstore/appstate_delivery_test.go
+@@ -0,0 +1,34 @@
++// Copyright (c) 2026 The wacli contributors
++// SPDX-License-Identifier: MPL-2.0
++package sqlstore
++
++import (
++	"database/sql"
++	"strings"
++	"testing"
++
++	_ "github.com/mattn/go-sqlite3"
++	"go.mau.fi/util/dbutil"
++	"go.mau.fi/whatsmeow/store"
++)
++
++func TestNativeDeliveryRejectsWeakSQLiteSynchronization(t *testing.T) {
++	raw, err := sql.Open("sqlite3", "file:"+t.TempDir()+"/fixture.db?_synchronous=NORMAL")
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer raw.Close()
++	db, err := dbutil.NewWithDB(raw, "sqlite3")
++	if err != nil {
++		t.Fatal(err)
++	}
++	s := &SQLStore{Container: &Container{db: db}, JID: "synthetic"}
++	_, err = s.StageAppStateDelivery(t.Context(), store.AppStateTransition{Name: "regular_low", Kind: "delta", AfterVersion: 1, Payload: []byte("synthetic")})
++	if err == nil || !strings.Contains(err.Error(), "synchronous FULL") {
++		t.Fatalf("weak staging was not refused before writes: %v", err)
++	}
++	err = s.AckAppStateDelivery(t.Context(), store.AppStateDeliveryID{Generation: "synthetic", Sequence: 1})
++	if err == nil || !strings.Contains(err.Error(), "synchronous FULL") {
++		t.Fatalf("weak acknowledgment was not refused: %v", err)
++	}
++}
+--- /dev/null
++++ b/store/sqlstore/upgrades/17-appstate-delivery.sql
+@@ -0,0 +1,14 @@
++-- v16 -> v17: One outstanding verified app-state delivery per device store
++CREATE TABLE whatsmeow_app_state_delivery (
++ jid TEXT PRIMARY KEY REFERENCES whatsmeow_device(jid) ON DELETE CASCADE,
++ generation TEXT NOT NULL,
++ sequence BIGINT NOT NULL CHECK (sequence >= 0),
++ name TEXT,
++ kind TEXT,
++ before_version BIGINT,
++ after_version BIGINT,
++ before_hash bytea,
++ after_hash bytea,
++ digest bytea,
++ payload bytea
++);
+--- a/types/events/appstate.go
++++ b/types/events/appstate.go
+@@ -11,6 +11,7 @@
+ 
+ 	"go.mau.fi/whatsmeow/appstate"
+ 	"go.mau.fi/whatsmeow/proto/waSyncAction"
++	"go.mau.fi/whatsmeow/store"
+ 	"go.mau.fi/whatsmeow/types"
+ )
+ 
+@@ -42,8 +43,10 @@
+ 
+ // Pin is emitted when a chat is pinned or unpinned from another device.
+ type Pin struct {
+-	JID       types.JID // The chat which was pinned or unpinned.
+-	Timestamp time.Time // The time when the (un)pinning happened.
++	// DeliveryID identifies an already checkpointed local projection, not a receipt.
++	DeliveryID *store.AppStateDeliveryID `json:"-"`
++	JID        types.JID                 // The chat which was pinned or unpinned.
++	Timestamp  time.Time                 // The time when the (un)pinning happened.
+ 
+ 	Action       *waSyncAction.PinAction // Whether the chat is now pinned or not.
+ 	FromFullSync bool                    // Whether the action is emitted because of a fullSync
+@@ -75,8 +78,10 @@
+ 
+ // Mute is emitted when a chat is muted or unmuted from another device.
+ type Mute struct {
+-	JID       types.JID // The chat which was muted or unmuted.
+-	Timestamp time.Time // The time when the (un)muting happened.
++	// DeliveryID identifies an already checkpointed local projection, not a receipt.
++	DeliveryID *store.AppStateDeliveryID `json:"-"`
++	JID        types.JID                 // The chat which was muted or unmuted.
++	Timestamp  time.Time                 // The time when the (un)muting happened.
+ 
+ 	Action       *waSyncAction.MuteAction // The current mute status of the chat.
+ 	FromFullSync bool                     // Whether the action is emitted because of a fullSync
+@@ -84,8 +89,10 @@
+ 
+ // Archive is emitted when a chat is archived or unarchived from another device.
+ type Archive struct {
+-	JID       types.JID // The chat which was archived or unarchived.
+-	Timestamp time.Time // The time when the (un)archiving happened.
++	// DeliveryID identifies an already checkpointed local projection, not a receipt.
++	DeliveryID *store.AppStateDeliveryID `json:"-"`
++	JID        types.JID                 // The chat which was archived or unarchived.
++	Timestamp  time.Time                 // The time when the (un)archiving happened.
+ 
+ 	Action       *waSyncAction.ArchiveChatAction // The current archival status of the chat.
+ 	FromFullSync bool                            // Whether the action is emitted because of a fullSync
+@@ -93,8 +100,10 @@
+ 
+ // MarkChatAsRead is emitted when a whole chat is marked as read or unread from another device.
+ type MarkChatAsRead struct {
+-	JID       types.JID // The chat which was marked as read or unread.
+-	Timestamp time.Time // The time when the marking happened.
++	// DeliveryID identifies an already checkpointed local projection, not a receipt.
++	DeliveryID *store.AppStateDeliveryID `json:"-"`
++	JID        types.JID                 // The chat which was marked as read or unread.
++	Timestamp  time.Time                 // The time when the marking happened.
+ 
+ 	Action       *waSyncAction.MarkChatAsReadAction // Whether the chat was marked as read or unread, and info about the most recent messages.
+ 	FromFullSync bool                               // Whether the action is emitted because of a fullSync
+@@ -130,7 +139,9 @@
+ 
+ // UnarchiveChatsSetting is emitted when the user changes the "Keep chats archived" setting from another device.
+ type UnarchiveChatsSetting struct {
+-	Timestamp time.Time // The time when the setting was changed.
++	// DeliveryID identifies an already checkpointed local projection, not a receipt.
++	DeliveryID *store.AppStateDeliveryID `json:"-"`
++	Timestamp  time.Time                 // The time when the setting was changed.
+ 
+ 	Action       *waSyncAction.UnarchiveChatsSetting // The new settings.
+ 	FromFullSync bool                                // Whether the action is emitted because of a fullSync
+@@ -178,7 +189,9 @@
+ // AppState is emitted directly for new data received from app state syncing.
+ // You should generally use the higher-level events like events.Contact and events.Mute.
+ type AppState struct {
+-	Index []string
++	// DeliveryID correlates fetched recovery debt; it never suppresses generic handlers.
++	DeliveryID *store.AppStateDeliveryID `json:"-"`
++	Index      []string
+ 	*waSyncAction.SyncActionValue
+ }
+ 

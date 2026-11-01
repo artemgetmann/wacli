@@ -193,7 +193,11 @@ func New(opts Options) (*App, error) {
 	return &App{opts: opts, db: db, chatStateSync: chatStateSync}, nil
 }
 
-func (a *App) OpenWA() error {
+func (a *App) OpenWA() error { return a.OpenWAContext(context.Background()) }
+func (a *App) OpenWAContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	a.waMu.Lock()
 	defer a.waMu.Unlock()
 	if a.opts.ReadOnly {
@@ -204,11 +208,16 @@ func (a *App) OpenWA() error {
 	}
 	if a.wa == nil {
 		sessionPath := filepath.Join(a.opts.StoreDir, "session.db")
-		cli, err := wa.New(wa.Options{StorePath: sessionPath, KeyStateStore: a.db})
+		cli, err := wa.NewWithContext(ctx, wa.Options{StorePath: sessionPath, KeyStateStore: a.db, AppStateConsumer: a.consumeAppStateDelivery})
 		if err != nil {
 			return err
 		}
 		a.wa = cli
+	}
+	if durable, ok := a.wa.(interface{ DrainAppStateDelivery(context.Context) error }); ok {
+		if err := durable.DrainAppStateDelivery(ctx); err != nil {
+			return fmt.Errorf("pending app state projection: %w", err)
+		}
 	}
 	if a.sessionState == nil {
 		state := newSessionObservation(a.opts.StoreDir)
@@ -258,7 +267,7 @@ func (a *App) EnsureAuthed(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := a.OpenWA(); err != nil {
+	if err := a.OpenWAContext(ctx); err != nil {
 		return err
 	}
 	if a.wa.IsAuthed() {
@@ -320,7 +329,7 @@ func (a *App) Connect(ctx context.Context, allowQR bool, qrWriter func(string)) 
 	if a.opts.ReadOnly {
 		return fmt.Errorf("read-only mode: command would connect to WhatsApp")
 	}
-	if err := a.OpenWA(); err != nil {
+	if err := a.OpenWAContext(ctx); err != nil {
 		return err
 	}
 	select {

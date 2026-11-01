@@ -212,7 +212,7 @@ func newDoctorCmd(flags *rootFlags) *cobra.Command {
 					linkedJID = roLinkedJID
 				}
 			} else if a != nil {
-				if err := a.OpenWA(); err == nil {
+				if err := a.OpenWAContext(ctx); err == nil {
 					authed = a.WA().IsAuthed()
 					if authed {
 						linkedJID = a.WA().LinkedJID()

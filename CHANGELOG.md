@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Sync: retain verified chat-state updates through an atomic local projection/checkpoint handoff, replay pending updates on startup, and report incomplete local persistence separately from request acceptance. Preserve newer unread state and existing uncovered-feature recovery.
+
 - Sync: keep valid delivery/read receipts after malformed entries in the same batch, report invalid input separately from storage failures, and keep incomplete syncs from advancing freshness. Thanks @jesusvillota (#537).
 
 ## 0.25.1 - 2026-10-26

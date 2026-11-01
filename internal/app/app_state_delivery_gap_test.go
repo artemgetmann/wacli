@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -33,10 +34,16 @@ import (
 // than treating a passing characterization as proof of end-to-end durability.
 // No cursor injection, paired device, Connect, network or production store.
 func TestAppStateDeliveryGapAcrossProcessKill(t *testing.T) {
+	runGapScenarios(t, false, []string{"held", "partial", "delivered"})
+}
+func TestAppStateDurableDeliveryAcrossProcessKill(t *testing.T) {
+	runGapScenarios(t, true, []string{"held", "partial", "delivered", "before-projection", "after-checkpoint", "projection-failure", "cursor-failure"})
+}
+func runGapScenarios(t *testing.T, durable bool, scenarios []string) {
 	if runtime.GOOS == "windows" {
 		t.Skip("requires Unix SIGKILL process status")
 	}
-	for _, scenario := range []string{"held", "partial", "delivered"} {
+	for _, scenario := range scenarios {
 		t.Run(scenario, func(t *testing.T) {
 			dir := t.TempDir()
 			run := func(stage string, kill bool) {
@@ -48,7 +55,7 @@ func TestAppStateDeliveryGapAcrossProcessKill(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 				defer cancel()
 				cmd := exec.CommandContext(ctx, exe, "-test.run=^TestAppStateDeliveryGapWorker$", "-test.v")
-				cmd.Env = append(os.Environ(), "WACLI_GAP_DIR="+dir, "WACLI_GAP_STAGE="+stage, "WACLI_GAP_SCENARIO="+scenario)
+				cmd.Env = append(os.Environ(), "WACLI_GAP_DIR="+dir, "WACLI_GAP_STAGE="+stage, "WACLI_GAP_SCENARIO="+scenario, "WACLI_GAP_FIXED="+fmt.Sprint(durable))
 				stdin, err := cmd.StdinPipe()
 				if err != nil {
 					t.Fatal(err)
@@ -107,6 +114,9 @@ func TestAppStateDeliveryGapAcrossProcessKill(t *testing.T) {
 				}
 			}
 			run("produce", scenario != "delivered")
+			if scenario == "after-checkpoint" {
+				run("arrival", false)
+			}
 			// This is a new OS process, not a DB close/reopen in the producer.
 			run("inspect", false)
 		})
@@ -116,7 +126,7 @@ func TestAppStateDeliveryGapAcrossProcessKill(t *testing.T) {
 func gapDevice(t *testing.T, path string) (*sqlstore.Container, *sdkstore.Device) {
 	t.Helper()
 	ctx := t.Context()
-	c, err := sqlstore.New(ctx, "sqlite3", sqliteutil.FileURI(path, "_foreign_keys=on"), log.Noop)
+	c, err := sqlstore.New(ctx, "sqlite3", sqliteutil.FileURI(path, "_foreign_keys=on&_synchronous=FULL"), log.Noop)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +174,9 @@ func TestAppStateDeliveryGapWorker(t *testing.T) {
 	jid := types.NewJID("456", types.DefaultUserServer)
 	at := time.Unix(1700000000, 0)
 	scenario := os.Getenv("WACLI_GAP_SCENARIO")
-	inspect := func(delivered bool) {
+	durable := os.Getenv("WACLI_GAP_FIXED") == "true"
+	stage := os.Getenv("WACLI_GAP_STAGE")
+	inspect := func(delivered, pendingExpected bool) {
 		chat, e := a.db.GetChat(jid.String())
 		must(e)
 		v, _, e := device.AppState.GetAppStateVersion(ctx, string(appstate.WAPatchRegularLow))
@@ -173,29 +185,85 @@ func TestAppStateDeliveryGapWorker(t *testing.T) {
 		must(e)
 		settings, e := device.ChatSettings.GetChatSettings(ctx, jid)
 		must(e)
-		if v != 1 || debt {
+		expectedVersion := uint64(1)
+		if scenario == "cursor-failure" {
+			expectedVersion = 0
+		}
+		if v != expectedVersion || debt {
 			t.Fatalf("cursor/debt = %d/%t", v, debt)
 		}
-		if chat.Archived != delivered || chat.Pinned != delivered || chat.Unread != !delivered || chat.UnreadCount != map[bool]int{true: 0, false: 2}[delivered] {
+		expectedCount := map[bool]int{true: 0, false: 2}[delivered]
+		expectedUnread := !delivered
+		if scenario == "after-checkpoint" && stage == "inspect" {
+			expectedCount = 1
+			expectedUnread = true
+		}
+		if chat.Archived != delivered || chat.Pinned != delivered || chat.Unread != expectedUnread || chat.UnreadCount != expectedCount {
 			t.Fatalf("unexpected persisted App state: %+v", chat)
 		}
 		if scenario == "held" && !settings.Archived {
 			t.Fatal("SDK collector did not update settings")
 		}
-		if scenario == "partial" && settings.Archived {
-			t.Fatal("failed batch unexpectedly reached collector")
+		if scenario == "partial" && settings.Archived != durable {
+			t.Fatal("partial batch SDK covered-state persistence mismatch")
+		}
+		pending, e := device.AppState.(sdkstore.AppStateDeliveryStore).PendingAppStateDelivery(ctx)
+		must(e)
+		if (pending != nil) != pendingExpected {
+			t.Fatalf("pending=%+v want %t", pending, pendingExpected)
 		}
 		// This counter covers this helper's fake interface only. It is not a
 		// cumulative SDK transport audit or outgoing-message deduplication proof.
 		if len(f.archiveCalls)+len(f.markReadCalls)+len(f.readReceiptCalls)+len(f.readSelfCalls) != 0 {
 			t.Fatal("unexpected fake send")
 		}
-		raw, e := json.Marshal(map[string]any{"scenario": scenario, "cursor": v, "debt": debt, "app_archived": chat.Archived, "app_pinned": chat.Pinned, "app_unread_count": chat.UnreadCount, "sdk_archived": settings.Archived})
+		raw, e := json.Marshal(map[string]any{"scenario": scenario, "cursor": v, "debt": debt, "app_archived": chat.Archived, "app_pinned": chat.Pinned, "app_unread_count": chat.UnreadCount, "sdk_archived": settings.Archived, "pending": pending != nil})
 		must(e)
 		fmt.Println("GAP " + string(raw))
 	}
-	if os.Getenv("WACLI_GAP_STAGE") == "inspect" {
-		inspect(scenario == "delivered")
+	pause := func() {
+		fmt.Println("GAP_BARRIER")
+		var b [1]byte
+		_, e := os.Stdin.Read(b[:])
+		t.Fatalf("parent released crash barrier without SIGKILL: %v", e)
+	}
+	if durable {
+		must(sdk.SetAppStateDeliveryConsumer(func(ctx context.Context, d *sdkstore.AppStateDelivery) error {
+			if stage == "produce" && scenario == "before-projection" {
+				inspect(false, true)
+				pause()
+			}
+			err := a.consumeAppStateDelivery(ctx, d)
+			if err == nil && stage == "produce" && scenario == "after-checkpoint" {
+				inspect(true, true)
+				pause()
+			}
+			return err
+		}))
+	}
+	if stage == "arrival" {
+		must(a.db.UpsertMessage(appstore.UpsertMessageParams{ChatJID: jid.String(), MsgID: "newer", SenderJID: jid.String(), Timestamp: at, Text: "synthetic"}))
+		must(a.db.IncrementChatUnread(jid.String()))
+		return
+	}
+	if stage == "inspect" {
+		if durable && scenario != "cursor-failure" {
+			if scenario == "before-projection" || scenario == "projection-failure" {
+				inspect(false, true)
+			}
+			if scenario == "after-checkpoint" {
+				inspect(true, true)
+			}
+			if scenario == "projection-failure" {
+				raw, e := sql.Open("sqlite3", sqliteutil.FileURI(filepath.Join(dir, "wacli.db"), "_foreign_keys=on"))
+				must(e)
+				_, e = raw.Exec("DROP TRIGGER fail_projection")
+				must(e)
+				must(raw.Close())
+			}
+			must(sdk.DrainAppStateDelivery(ctx))
+		}
+		inspect(scenario == "delivered" || durable && scenario != "cursor-failure", false)
 		return
 	}
 	must(a.db.UpsertChat(jid.String(), "dm", "synthetic", at))
@@ -224,6 +292,20 @@ func TestAppStateDeliveryGapWorker(t *testing.T) {
 		must(e)
 		patches = append(patches, patch)
 	}
+	if scenario == "projection-failure" {
+		raw, e := sql.Open("sqlite3", sqliteutil.FileURI(filepath.Join(dir, "wacli.db"), "_foreign_keys=on"))
+		must(e)
+		_, e = raw.Exec(`CREATE TRIGGER fail_projection BEFORE UPDATE OF pinned ON chats WHEN NEW.pinned=1 BEGIN SELECT RAISE(FAIL,'synthetic projection failure'); END`)
+		must(e)
+		must(raw.Close())
+	}
+	if scenario == "cursor-failure" {
+		raw, e := sql.Open("sqlite3", sqliteutil.FileURI(filepath.Join(dir, "session.db"), "_foreign_keys=on"))
+		must(e)
+		_, e = raw.Exec(`CREATE TRIGGER fail_cursor BEFORE INSERT ON whatsmeow_app_state_version BEGIN SELECT RAISE(FAIL,'synthetic cursor failure'); END`)
+		must(e)
+		must(raw.Close())
+	}
 	if scenario == "partial" {
 		patches[1].SnapshotMAC[0] ^= 1
 	} else {
@@ -231,7 +313,7 @@ func TestAppStateDeliveryGapWorker(t *testing.T) {
 	}
 	var held []any
 	_, err = sdk.DangerousInternals().ApplyAppStatePatches(ctx, appstate.WAPatchRegularLow, appstate.HashState{}, &appstate.PatchList{Name: appstate.WAPatchRegularLow, Patches: patches}, false, &held)
-	if scenario == "partial" {
+	if scenario == "partial" || scenario == "projection-failure" || scenario == "cursor-failure" {
 		if err == nil || len(held) != 0 {
 			t.Fatalf("expected decoder error before collector, got %v / %d events", err, len(held))
 		}
@@ -248,11 +330,8 @@ func TestAppStateDeliveryGapWorker(t *testing.T) {
 		}
 		must(a.appStatePersist.waitIdle(ctx))
 	}
-	inspect(scenario == "delivered")
+	inspect(scenario == "delivered" || durable && scenario != "projection-failure" && scenario != "cursor-failure", scenario == "projection-failure")
 	if scenario != "delivered" {
-		fmt.Println("GAP_BARRIER")
-		var b [1]byte
-		_, err := os.Stdin.Read(b[:])
-		t.Fatalf("parent released crash barrier without SIGKILL: %v", err)
+		pause()
 	}
 }

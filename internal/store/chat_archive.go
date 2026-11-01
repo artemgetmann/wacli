@@ -38,48 +38,53 @@ func (d *DB) ChatArchiveRecoveryRequired() (bool, error) {
 }
 
 func (d *DB) SetChatArchiveSetting(enabled bool, timestamp time.Time) error {
-	if timestamp.IsZero() {
-		return nil
-	}
 	tx, err := d.sql.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`INSERT INTO chat_archive_setting(id,enabled,timestamp_ms) VALUES(1,?,?)
- ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled,timestamp_ms=excluded.timestamp_ms
-	 WHERE excluded.timestamp_ms >= chat_archive_setting.timestamp_ms`, boolToInt(enabled), timestamp.UnixMilli()); err != nil {
-		return err
-	}
-	if err := reconcileChatArchive(tx, ""); err != nil {
+	if err = setChatArchiveSettingTx(tx, enabled, timestamp); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
-
-func (d *DB) ApplyChatArchive(jid string, archived bool, timestamp time.Time) error {
+func setChatArchiveSettingTx(tx *sql.Tx, enabled bool, timestamp time.Time) error {
 	if timestamp.IsZero() {
-		return d.SetChatArchived(jid, archived)
+		return nil
 	}
+	if _, err := tx.Exec(`INSERT INTO chat_archive_setting(id,enabled,timestamp_ms) VALUES(1,?,?)
+ ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled,timestamp_ms=excluded.timestamp_ms
+ WHERE excluded.timestamp_ms >= chat_archive_setting.timestamp_ms`, boolToInt(enabled), timestamp.UnixMilli()); err != nil {
+		return err
+	}
+	return reconcileChatArchive(tx, "")
+}
+func (d *DB) ApplyChatArchive(jid string, archived bool, timestamp time.Time) error {
 	tx, err := d.sql.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`INSERT INTO chats(jid,kind) VALUES(?,'unknown') ON CONFLICT(jid) DO NOTHING`, jid); err != nil {
-		return err
-	}
-	// A replay at the same timestamp must not re-archive a newer arrival.
-	if _, err := tx.Exec(`UPDATE chats SET
- archived=CASE WHEN ? AND ? >= archive_cleared_ms THEN 1 ELSE 0 END,
- pinned=CASE WHEN ? AND ? >= archive_cleared_ms THEN 0 ELSE pinned END, archive_action_ms=?
- WHERE jid=? AND ? >= archive_action_ms`, archived, timestamp.UnixMilli(), archived, timestamp.UnixMilli(), timestamp.UnixMilli(), jid, timestamp.UnixMilli()); err != nil {
-		return err
-	}
-	if err := reconcileChatArchive(tx, jid); err != nil {
+	if err = applyChatArchiveTx(tx, jid, archived, timestamp); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+func applyChatArchiveTx(tx *sql.Tx, jid string, archived bool, timestamp time.Time) error {
+	if _, err := tx.Exec(`INSERT INTO chats(jid,kind) VALUES(?,'unknown') ON CONFLICT(jid) DO NOTHING`, jid); err != nil {
+		return err
+	}
+	if timestamp.IsZero() {
+		_, err := tx.Exec(`UPDATE chats SET archived=?,pinned=CASE WHEN ? THEN 0 ELSE pinned END WHERE jid=?`, archived, archived, jid)
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE chats SET
+ archived=CASE WHEN ? AND ? >= archive_cleared_ms THEN 1 ELSE 0 END,
+ pinned=CASE WHEN ? AND ? >= archive_cleared_ms THEN 0 ELSE pinned END,archive_action_ms=?
+ WHERE jid=? AND ? >= archive_action_ms`, archived, timestamp.UnixMilli(), archived, timestamp.UnixMilli(), timestamp.UnixMilli(), jid, timestamp.UnixMilli()); err != nil {
+		return err
+	}
+	return reconcileChatArchive(tx, jid)
 }
 
 // ReconcileChatArchiveIncoming runs behind an in-flight app-state replay while

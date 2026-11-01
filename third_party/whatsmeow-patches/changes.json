@@ -1,0 +1,69 @@
+{
+  "patch_sha256": "34d573abbad296e5cf6a2186580baa034d62fd4f56618bea66bcbcd2bc8bd8aa",
+  "files": {
+    "appstate.go": {
+      "before": "78e3e6f785e50762ba6112c1c626e1ba3b53e7a44d007a5b7fb5cc3c972b1893",
+      "after": "464fadf7dff8fe30f90d3b4edd5a089056d37ebb9607886352856fcff99143dd"
+    },
+    "appstate/decode.go": {
+      "before": "c78117d56244f4b2e6dc25e34e03110891e718271c6b719407536c47dd3077dd",
+      "after": "9d560212dd599f13868ce07a049300409ec61718175bc83d279d0b98f46fd594"
+    },
+    "appstate/delivery.go": {
+      "before": null,
+      "after": "12f37b16f13eaeb8a275abb24fa36fe2c43c50116e5f48079546d0ddc5dc5eac"
+    },
+    "appstate/hash.go": {
+      "before": "4d2657c0600e12f85eb5119c3d6ea10a2e469f21072b05015e711917015e3bc0",
+      "after": "c818e4abb33f36ec0681d331eda81d39188534407e999024aaedf078451b3d48"
+    },
+    "appstate/keys.go": {
+      "before": "2189a9ced5e2df1004881316465763c2ecdacedc5be0645b27a72648b3745b2f",
+      "after": "809173b0a1601c4d1c5aeed6c4a30eeeb04a508c27c251f94986440be256e872"
+    },
+    "appstate/recovery.go": {
+      "before": "7597990ab69be0d34e74475fe7d59b87b7ac737935fcd7d94bf9b6474671e9eb",
+      "after": "682cface894953bd4beb196390bbf4746c6479ca923fe0c3cf8954a066b7348e"
+    },
+    "appstate_delivery.go": {
+      "before": null,
+      "after": "3f3f79f44ef970a45d189a66024a227cea49c5a4a18b5008d5acb6dafda97b0a"
+    },
+    "appstate_delivery_crash_test.go": {
+      "before": null,
+      "after": "7d1f386cef515e8d6d6d1b0becad037a4bdf2cd2a051022e2baee71a90bcdf6a"
+    },
+    "appstate_delivery_snapshot_test.go": {
+      "before": null,
+      "after": "befb5569990e62322fcb004b62c9a2f32f8ecfcc0a88f4a26487fe3e35338f1c"
+    },
+    "appstate_delivery_test.go": {
+      "before": null,
+      "after": "cc2a9359dd8c8dbd8df6ae732c8cf9009fe8d769c5566e276900f072a88fd4b7"
+    },
+    "client.go": {
+      "before": "4ba6b5f8548f9d0bc6ccc15bbdfecd65c615074538256833706b9bfb590bc9ea",
+      "after": "ce87e596d19b1910d12dffea8363c2b0a38f6d7576a87299b42f376f10777c77"
+    },
+    "store/appstate_delivery.go": {
+      "before": null,
+      "after": "ff7fbb193f111e8725cea729deb24e83ea74cbdb604a71455c8f9596ee53b9c3"
+    },
+    "store/sqlstore/appstate_delivery.go": {
+      "before": null,
+      "after": "dac7fcff0471453b8bd08bda27a74ee28f60ce11e8835ee77766d5f03fc53060"
+    },
+    "store/sqlstore/appstate_delivery_test.go": {
+      "before": null,
+      "after": "54ad72b3d4d6ca485fca4e490991a56b9bc59f85b036f2871275b7351d37636e"
+    },
+    "store/sqlstore/upgrades/17-appstate-delivery.sql": {
+      "before": null,
+      "after": "2486c9ddc045e35a689e78fed0b90826688a1af2153a9a18dba33d4794a732ee"
+    },
+    "types/events/appstate.go": {
+      "before": "facdc2e530e3e147bc1053d6a378aa2bcb7b5dbaac82c0d7831397a4d9b5de5d",
+      "after": "d96cf1df5eaf3305f6a5e61e5db62b62d6266b2d7aea18ab02e4aa57f9e95d08"
+    }
+  }
+}

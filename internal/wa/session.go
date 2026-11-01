@@ -14,16 +14,15 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 )
 
-func (c *Client) init() (err error) {
+func (c *Client) init(ctx context.Context) (err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	ctx := context.Background()
 	dbLog := newWhatsmeowLogger("Database", "ERROR", os.Stderr)
 	if err := sqliteutil.ChmodFiles(c.opts.StorePath, 0o600); err != nil {
 		return err
 	}
-	container, err := sqlstore.New(ctx, "sqlite3", sqliteutil.FileURI(c.opts.StorePath, "_foreign_keys=on"), dbLog)
+	container, err := sqlstore.New(ctx, "sqlite3", sqliteutil.FileURI(c.opts.StorePath, "_foreign_keys=on&_synchronous=FULL"), dbLog)
 	if err != nil {
 		return fmt.Errorf("open whatsmeow store: %w", err)
 	}
@@ -51,6 +50,9 @@ func (c *Client) init() (err error) {
 	c.contactJournal = journalContactStore(deviceStore)
 	logger := newWhatsmeowLogger("Client", "ERROR", os.Stderr)
 	c.client = whatsmeow.NewClient(deviceStore, logger)
+	if err := c.client.SetAppStateDeliveryConsumer(c.opts.AppStateConsumer); err != nil {
+		return err
+	}
 	// FetchAppStateEvents fails closed without this: recovery snapshots must
 	// return every mutation so wacli can rebuild its own database.
 	c.client.EmitAppStateEventsOnFullSync = true

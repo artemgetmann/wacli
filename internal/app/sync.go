@@ -124,7 +124,7 @@ func (a *App) Sync(ctx context.Context, opts SyncOptions) (SyncResult, error) {
 	defer cancel()
 	limits := &syncStorageLimits{app: a, opts: opts, cancel: cancel}
 
-	if err := a.OpenWA(); err != nil {
+	if err := a.OpenWAContext(ctx); err != nil {
 		return SyncResult{}, err
 	}
 	if opts.Mode == SyncModeFollow && opts.StaleThreshold > 0 {

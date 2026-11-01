@@ -2,6 +2,7 @@ package wa
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"go.mau.fi/whatsmeow/store"
@@ -175,4 +176,32 @@ func (j *ContactStoreJournal) Ack(seq uint64) {
 		j.pending[i] = ContactWrite{}
 	}
 	j.pending = kept
+}
+
+// Forward the optional native handoff explicitly: embedding AppStateStore alone
+// hides it. Observe a cursor write only after the atomic SDK transaction commits.
+func (s *journaledAppStateStore) StageAppStateDelivery(ctx context.Context, transition store.AppStateTransition) (*store.AppStateDelivery, error) {
+	native, ok := s.AppStateStore.(store.AppStateDeliveryStore)
+	if !ok {
+		return nil, fmt.Errorf("underlying app state store lacks native delivery")
+	}
+	delivery, err := native.StageAppStateDelivery(ctx, transition)
+	if err == nil {
+		s.journal.NoteCursorWrite(transition.Name)
+	}
+	return delivery, err
+}
+func (s *journaledAppStateStore) PendingAppStateDelivery(ctx context.Context) (*store.AppStateDelivery, error) {
+	native, ok := s.AppStateStore.(store.AppStateDeliveryStore)
+	if !ok {
+		return nil, fmt.Errorf("underlying app state store lacks native delivery")
+	}
+	return native.PendingAppStateDelivery(ctx)
+}
+func (s *journaledAppStateStore) AckAppStateDelivery(ctx context.Context, id store.AppStateDeliveryID) error {
+	native, ok := s.AppStateStore.(store.AppStateDeliveryStore)
+	if !ok {
+		return fmt.Errorf("underlying app state store lacks native delivery")
+	}
+	return native.AckAppStateDelivery(ctx, id)
 }

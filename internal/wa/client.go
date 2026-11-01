@@ -26,7 +26,8 @@ import (
 type Options struct {
 	StorePath string
 	// The application owns durable, account-scoped key recovery metadata.
-	KeyStateStore AppStateKeyStateStore
+	KeyStateStore    AppStateKeyStateStore
+	AppStateConsumer func(context.Context, *wastore.AppStateDelivery) error
 }
 
 type Client struct {
@@ -46,7 +47,8 @@ func (c *Client) ContactJournal() *ContactStoreJournal {
 	return c.contactJournal
 }
 
-func New(opts Options) (*Client, error) {
+func New(opts Options) (*Client, error) { return NewWithContext(context.Background(), opts) }
+func NewWithContext(ctx context.Context, opts Options) (*Client, error) {
 	if strings.TrimSpace(opts.StorePath) == "" {
 		return nil, fmt.Errorf("StorePath is required")
 	}
@@ -55,7 +57,7 @@ func New(opts Options) (*Client, error) {
 		return nil, fmt.Errorf("StorePath must not contain '?' or '#'")
 	}
 	c := &Client{opts: opts}
-	if err := c.init(); err != nil {
+	if err := c.init(ctx); err != nil {
 		return nil, err
 	}
 	return c, nil

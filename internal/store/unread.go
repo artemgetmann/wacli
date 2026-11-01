@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -21,13 +23,20 @@ func (d *DB) ClearChatUnreadThroughPreservingMarker(jid string, through time.Tim
 	return d.clearChatUnreadThrough(jid, through, ids, true)
 }
 
+type stateExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
 func (d *DB) clearChatUnreadThrough(jid string, through time.Time, ids []string, preserveMarker bool) error {
+	return clearChatUnreadThroughOn(d.sql, jid, through, ids, preserveMarker)
+}
+func clearChatUnreadThroughOn(db stateExecer, jid string, through time.Time, ids []string, preserveMarker bool) error {
 	jid = strings.TrimSpace(jid)
 	if jid == "" {
 		return fmt.Errorf("chat JID is required")
 	}
 	if through.IsZero() {
-		return d.SetChatUnread(jid, false)
+		return setChatUnreadOn(db, jid, false)
 	}
 	args := []any{unix(through)}
 	boundary := "0"
@@ -47,7 +56,7 @@ func (d *DB) clearChatUnreadThrough(jid string, through time.Time, ids []string,
 		guard = " AND unread_count <= (SELECT COUNT(*) FROM messages WHERE " + selfReceiptEligible + ")"
 		args = append(args, jid)
 	}
-	result, err := d.sql.ExecContext(storeCtx(), `
+	result, err := db.ExecContext(storeCtx(), `
   WITH position AS (SELECT ? AS ts, `+boundary+` AS row_id),
   remaining AS (
    SELECT COUNT(*) AS count FROM messages, position
