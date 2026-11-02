@@ -35,6 +35,7 @@ env:
 
 jobs:
   hydrate:
+    if: github.repository == 'openclaw/wacli'
     name: hydrate
     runs-on: [self-hosted, crabbox, openclaw, wacli, "${{ inputs.crabbox_runner_label }}"]
     timeout-minutes: 120

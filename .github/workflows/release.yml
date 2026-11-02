@@ -17,6 +17,7 @@ permissions: {}
 
 jobs:
   release:
+    if: github.repository == 'openclaw/wacli'
     permissions:
       actions: read
       checks: read
