@@ -13,7 +13,7 @@ test('neutral versioned report binds stable ID and exact producer', () => {
   const result = report(cases[0].review);
   assert.equal(result.finding_id, cases[0].review.finding_id);
   assert.equal(result.contract_version, 1);
-  assert.equal(result.policy_version, '1.0.0');
+  assert.equal(result.policy_version, '1.1.0');
   assert.match(result.producer_sha256, /^[0-9a-f]{64}$/);
   assert.equal('item' in result, false);
   assert.equal('ledger' in result, false);
