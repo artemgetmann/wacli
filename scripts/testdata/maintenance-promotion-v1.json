@@ -1,0 +1,43 @@
+{
+  "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+  "repository": "artemgetmann/wacli",
+  "publication_outcome": "not_attempted",
+  "pr_inventory_complete": true,
+  "existing_prs": [
+    {
+      "repository": "artemgetmann/wacli",
+      "finding_id": "fixture:wacli:upstream:123:bounded-fix",
+      "url": "https://github.com/artemgetmann/wacli/pull/123",
+      "remote_verified": true,
+      "state": "open",
+      "draft": true,
+      "owned": true,
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "concrete_change": true,
+  "missing_from_fork": true,
+  "isolated_tests_passed": true,
+  "tested_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "test_evidence": [
+    "synthetic baseline fails; candidate passes"
+  ],
+  "risks": "Synthetic fixture only.",
+  "rollout": "No live rollout authorized.",
+  "decision_at": "2026-11-02T15:00:00Z",
+  "pr_inventory_observed_at": "2026-11-02T14:59:00Z",
+  "remote_inventory_evidence": [
+    "fixture-only authoritative PR snapshot"
+  ],
+  "owner_overlap_checked": true,
+  "implementation_complete": true,
+  "applicable_tests_passed": true,
+  "independent_review_passed": true,
+  "independent_review_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "implementation_owner": "fixture:implementer",
+  "independent_reviewer": "fixture:independent-reviewer",
+  "independent_review_evidence": [
+    "fixture-only exact-head independent review"
+  ],
+  "unresolved_findings": []
+}
