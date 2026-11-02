@@ -14,6 +14,7 @@ import (
 // DeliveryCheckpoint identifies local SDK consumption, not a protocol version.
 type DeliveryCheckpoint struct {
 	Predecessor *DeliveryCheckpoint
+	PriorEpoch  *DeliveryCheckpoint
 	Device      string
 	Generation  string
 	Sequence    uint64
@@ -111,9 +112,37 @@ func (d *DB) ApplyAppStateDelivery(ctx context.Context, id DeliveryCheckpoint, a
 			if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM app_state_delivery_checkpoint`).Scan(&count); err != nil {
 				return err
 			}
-			if id.Sequence != 1 || count != 0 {
+
+			if id.Sequence != 1 {
 				return fmt.Errorf("unvalidated app state epoch")
 			}
+			if count != 0 {
+				if count != 1 || id.PriorEpoch == nil {
+					return fmt.Errorf("unvalidated app state epoch")
+				}
+				var debt int
+				if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM app_state_recovery_intents`).Scan(&debt); err != nil {
+					return err
+				}
+				if debt != 0 {
+					return fmt.Errorf("prior epoch has unresolved recovery debt")
+				}
+				p := id.PriorEpoch
+				result, e := tx.ExecContext(ctx, `DELETE FROM app_state_delivery_checkpoint WHERE generation=? AND sequence=? AND digest=? AND device_jid=?`, p.Generation, p.Sequence, p.Digest, p.Device)
+				if e != nil {
+					return e
+				}
+				n, e := result.RowsAffected()
+				if e != nil {
+					return e
+				}
+				if n != 1 {
+					return fmt.Errorf("prior epoch checkpoint mismatch")
+				}
+			} else if id.PriorEpoch != nil {
+				return fmt.Errorf("prior epoch checkpoint missing")
+			}
+
 		} else if id.Predecessor == nil || id.Predecessor.Generation != id.Generation || id.Predecessor.Sequence != seq || !bytes.Equal(id.Predecessor.Digest, digest) {
 			return fmt.Errorf("app state predecessor identity/digest mismatch")
 		}

@@ -43,7 +43,8 @@ var PostgresArrayWrapper func(any) interface {
 
 type SQLStore struct {
 	*Container
-	JID string
+	JID             string
+	retiredDelivery bool
 
 	preKeyLock sync.Mutex
 

@@ -35,7 +35,20 @@ type AppStateTransition struct {
 
 // AppStateDeliveryBoundary is durable native provenance, including after ACK.
 // Fresh epochs describe a tracking boundary, not prior projection completeness.
+type AppStateEpochIdentity struct {
+	Device string
+	ID     AppStateDeliveryID
+}
+
+// AppStateDeliveryLifecycle exposes a bounded retired slot without credentials.
+// Consumers must finish or refuse it before admitting a replacement device.
+type AppStateDeliveryLifecycle interface {
+	RetiredAppStateDeliveryStore(context.Context) (AppStateDeliveryStore, error)
+}
+
 type AppStateDeliveryBoundary struct {
+	Retired     bool
+	PriorEpoch  *AppStateEpochIdentity
 	Device      string
 	Epoch       string
 	ID          AppStateDeliveryID

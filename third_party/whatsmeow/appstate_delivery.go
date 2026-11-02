@@ -28,8 +28,10 @@ func (cli *Client) SetAppStateDeliveryConsumer(consumer func(context.Context, *s
 		cli.appStateProc.DeliveryConsumer = nil
 	} else {
 		cli.appStateProc.DeliveryConsumer = func(ctx context.Context, d *store.AppStateDelivery) error {
-			if err := cli.persistCoveredSDKDeliveryState(ctx, d); err != nil {
-				return err
+			if !d.Boundary.Retired {
+				if err := cli.persistCoveredSDKDeliveryState(ctx, d); err != nil {
+					return err
+				}
 			}
 			return consumer(ctx, d)
 		}

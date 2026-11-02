@@ -1,5 +1,5 @@
 {
-  "patch_sha256": "be67d7aa9e6b230f944a4b2086c0e8b0c7a7ee09293b8eb58f3159c615ef921a",
+  "patch_sha256": "02bb818bdb21f4f7375e95504a837f78c6696cd4ec8e3a14689166a1f3419e8a",
   "files": {
     "appstate.go": {
       "before": "78e3e6f785e50762ba6112c1c626e1ba3b53e7a44d007a5b7fb5cc3c972b1893",
@@ -11,7 +11,7 @@
     },
     "appstate/delivery.go": {
       "before": null,
-      "after": "4148abb4433544ad03a0069b41fb7874984b4bc5d2c090fe9148d12780bbf000"
+      "after": "fbe756ecbe119ecb184e2d4e9933aa18b0503fda02515b0295a5db9d7de97625"
     },
     "appstate/hash.go": {
       "before": "4d2657c0600e12f85eb5119c3d6ea10a2e469f21072b05015e711917015e3bc0",
@@ -27,7 +27,7 @@
     },
     "appstate_delivery.go": {
       "before": null,
-      "after": "3efaf2532b5048080ffc177a596ec7df9075d9a908d3bef00fd012322e1e6060"
+      "after": "8ba96ef3378d89b31dbf1d3bb3d8c3d91ebe8d7159dd1d55459587b05a61a226"
     },
     "appstate_delivery_crash_test.go": {
       "before": null,
@@ -59,15 +59,27 @@
     },
     "store/appstate_delivery.go": {
       "before": null,
-      "after": "87e240912d8a6b60ad1c30233e892efb35e0d5fed1e55f12b5fa5f2189a437b1"
+      "after": "0b398307118582f90e3138840bb5d01e243eee7933a3cb684e75f1e079f45595"
     },
     "store/sqlstore/appstate_delivery.go": {
       "before": null,
-      "after": "0d03807bc6738ab3658822364bbeea55b57361547340258d5158a79475d12e9f"
+      "after": "7fd878673b8b79070f5964698a59ad584865d090c849633f633dadd27ab9d3b7"
     },
     "store/sqlstore/appstate_delivery_test.go": {
       "before": null,
       "after": "54ad72b3d4d6ca485fca4e490991a56b9bc59f85b036f2871275b7351d37636e"
+    },
+    "store/sqlstore/appstate_retirement.go": {
+      "before": null,
+      "after": "92be7376a1fff1f740c6a3cee0544fd0b330144d1df60f639dac7e3f670f93ab"
+    },
+    "store/sqlstore/container.go": {
+      "before": "4222d5c8e7775ea471a058a408dabc69088835b931b62760e805ba413f13cfc1",
+      "after": "6c66f160207c30bea5e081acebc03e1e5468e6fed141264773f9e15a34a1deec"
+    },
+    "store/sqlstore/store.go": {
+      "before": "6b5894e88fcf4522a69af3cd271f4b401dbb7a7b39c40720b6e4a01dd44062b4",
+      "after": "c2e59c39e92c8577ce70dc007d9b52e71ba7399dccfb4ee86c45dd5f0ac99ee2"
     },
     "store/sqlstore/upgrades/17-appstate-delivery.sql": {
       "before": null,
@@ -76,6 +88,10 @@
     "store/sqlstore/upgrades/18-appstate-predecessor.sql": {
       "before": null,
       "after": "fb47960d43048b57ef80fd89d99da860eeaa63a92e056fad99739f38c4bd1b1c"
+    },
+    "store/sqlstore/upgrades/19-appstate-retirement.sql": {
+      "before": null,
+      "after": "7414e7e37585e7fa0567b66f746e2581a39b8ce5e8998c8afa540f2c876cc69e"
     },
     "types/events/appstate.go": {
       "before": "facdc2e530e3e147bc1053d6a378aa2bcb7b5dbaac82c0d7831397a4d9b5de5d",

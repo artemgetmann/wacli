@@ -10,9 +10,11 @@ review, not a claim of live-device convergence or deployment.
 Archive, pin, mute, mark-read/unread and the auto-unarchive preference use the
 handoff. Exact unread ranges keep the existing same-second, incomplete-history
 and newer-marker rules. Existing Star, DeleteForMe, Contact and generic handlers
-remain active; these actions retain bounded conservative collection recovery
-debt until a complete replay persists them. That debt is containment, not local
-payload replay for those uncovered projections.
+remain active with conservative collection recovery debt. That debt is
+containment, not local payload replay or an ordering fence for those projections.
+In particular, delayed old Star callbacks can overwrite newer recovered starring
+state without leaving debt. Starring ordering is explicitly deferred and is not
+covered by this PR; preserving the handler does not establish that guarantee.
 
 | Boundary | What may be claimed |
 | --- | --- |
@@ -70,8 +72,8 @@ the upstream current-version freshness check; local delivery IDs do not bypass
 it. Equal/lower versions are meaningful only for an explicit replacement.
 
 App migrations 33→35 add checkpoint/debt-correlation tables and device binding without changing
-existing chat state or recovery intents. SDK migrations 16→18 preserve existing
-cursor state, retain predecessor identity and fence schema-17 and older writers. Existing data already
+existing chat state or recovery intents. SDK migrations 16→19 preserve existing
+cursor state, retain predecessor identity and fence schema-18 and older writers. Existing data already
 missed before this upgrade is not reconstructed from cursors; ordinary external
 recovery remains necessary for that historical gap.
 
@@ -130,7 +132,7 @@ metadata is suppressed from global handlers; it is not a persistence receipt.
 
 ## Successor pairing admission
 
-The native schema/compatibility is18. Each future stage retains its exact
+The native schema/compatibility is19. Each future stage retains its exact
 predecessor sequence/digest in the same native transaction as current identity,
 payload, cursor/hash/MAC and reset. Generation is shared within an epoch; the
 slot is device-scoped. App schema35 binds checkpoint generations to that device.
@@ -145,7 +147,7 @@ not prove prior App completeness or clear older recovery debt. Schema17 migratio
 preserves existing identities and payloads without inventing predecessors.
 Independently matching legacy acknowledgments/current checkpoints may bind their
 device and retry acknowledgment. A genuinely fresh pending sequence1 is admitted
-only with no App checkpoint history. Other legacy pending pairs with an unknown
+only with no App checkpoint history, or the exact independently retained prior-epoch identity described below. Other legacy pending pairs with an unknown
 predecessor, wrong epochs/devices/digests, and one-sided acknowledged restores
 are refused with evidence preserved. Use independently verified matching stores
 or a separately validated recovery process; do not reset checkpoints or lower
@@ -155,3 +157,40 @@ live database copy is supplied by this successor.
 These checks detect the tested identity mismatches, not mutually stale paired
 backups or arbitrary projection corruption with matching metadata. They do not
 reconstruct missing acknowledged payloads, message history or remote receipts.
+
+
+## Credential deletion and replacement login
+
+Native migration19 adds one bounded retired-delivery slot without a credential
+foreign key. Device.Delete copies the verified delivery boundary and any pending
+payload into that slot in the same FULL native transaction that deletes the device
+and cascades its credentials. A failed or interrupted transaction leaves both
+sides unchanged. The retired slot contains no private device keys; it can contain
+verified chat-state payloads and is private local state with the same protection
+as the original payload. It is not a backup or arbitrary-history reconstruction.
+
+On unauthenticated startup, a valid covered retired payload may finish its App
+projection/checkpoint and exact acknowledgment without recreating deleted SDK
+settings or connecting to WhatsApp. A completed old epoch admits a same-account
+replacement device only through an independently retained native prior-epoch
+identity. The first new projection atomically replaces only that exact old App
+checkpoint; chat/message history is retained. A failed App transaction retains
+the old checkpoint and the new native payload. Subsequent retirements reuse the
+single slot only when the active epoch's prior witness matches it. The CLI's
+single-device store and exclusive LOCK remain the ownership contract.
+
+Wrong/missing identity, another account, ambiguous previously deleted stores,
+retired uncovered work and unresolved recovery debt refuse with evidence retained.
+No checkpoint reset, general repair command, downgrade or automatic account merge
+is provided. The previous compatibility18 binary cannot write native19 stores.
+App schema remains35; the new cross-epoch transaction predicate is code guarded by
+the native compatibility fence. A legitimate retirement is evidence of credential
+deletion, not proof of WhatsApp account freshness or successful live pairing.
+
+Writable auth status now owns the existing exclusive LOCK through session open,
+drain and close. Offline doctor never opens/drains a writable session. Its App database
+migrations hold the existing exclusive lock when available; with another owner
+it falls back to read-only inspection. Doctor --connect uses the exclusive writer path. Read-only diagnostics never acknowledge
+pending updates. Synthetic subprocess tests cover held locks, timeout, migration
+failure/retry, previous-writer refusal and killed deletion transactions. No live
+QR/code login, remote logout or device convergence test is claimed.

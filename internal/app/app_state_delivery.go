@@ -63,6 +63,18 @@ func (a *App) consumeAppStateDelivery(ctx context.Context, d *sdkstore.AppStateD
 	if err != nil {
 		return err
 	}
+	if d.Boundary.Retired {
+		for _, m := range mutations {
+			if m.Operation != waServerSync.SyncdMutation_SET || m.Action == nil || len(m.Index) == 0 {
+				return fmt.Errorf("retired app state contains uncovered work; evidence retained, independent recovery required")
+			}
+			switch m.Index[0] {
+			case appstate.IndexArchive, appstate.IndexPin, appstate.IndexMute, appstate.IndexMarkChatAsRead, appstate.IndexSettingUnarchiveChats:
+			default:
+				return fmt.Errorf("retired app state contains uncovered work; evidence retained, independent recovery required")
+			}
+		}
+	}
 	var actions []appstore.ChatStateProjection
 	var observations []any
 	var debt []string
@@ -189,6 +201,11 @@ func eventDeliveryProvenance(evt any) *sdkstore.AppStateDeliveryID {
 func checkpointForBoundary(b *sdkstore.AppStateDeliveryBoundary) appstore.DeliveryCheckpoint {
 	cp := deliveryCheckpoint(b.ID)
 	cp.Device = b.Device
+	if b.PriorEpoch != nil {
+		prior := deliveryCheckpoint(b.PriorEpoch.ID)
+		prior.Device = b.PriorEpoch.Device
+		cp.PriorEpoch = &prior
+	}
 	if b.Predecessor != nil {
 		prev := deliveryCheckpoint(*b.Predecessor)
 		prev.Device = b.Device
@@ -213,11 +230,27 @@ func (a *App) validateAppStateDeliveryBoundary(ctx context.Context, b *sdkstore.
 		}
 		return refuse("session/device missing for existing App checkpoints")
 	}
+	if b.Retired {
+		debt, err := a.db.AppStateRecoveryCollections()
+		if err != nil {
+			return err
+		}
+		if len(debt) != 0 {
+			return refuse("retired epoch has unresolved recovery debt; independent recovery required")
+		}
+	}
 	if b.Device == "" || b.ID.Generation == "" {
 		return refuse("missing device/epoch")
 	}
+	priorMatches := func() bool {
+		if b.PriorEpoch == nil || len(checkpoints) != 1 {
+			return false
+		}
+		cp := checkpoints[0]
+		return cp.Device == b.PriorEpoch.Device && cp.Generation == b.PriorEpoch.ID.Generation && cp.Sequence == b.PriorEpoch.ID.Sequence && bytes.Equal(cp.Digest, b.PriorEpoch.ID.Digest[:])
+	}
 	if b.ID.Sequence == 0 {
-		if b.Epoch == "fresh" && len(checkpoints) == 0 {
+		if b.Epoch == "fresh" && (len(checkpoints) == 0 && b.PriorEpoch == nil || priorMatches()) {
 			return nil
 		}
 		return refuse("fresh epoch conflicts with App checkpoint history")
@@ -230,7 +263,7 @@ func (a *App) validateAppStateDeliveryBoundary(ctx context.Context, b *sdkstore.
 		}
 	}
 	if cp == nil {
-		if b.Pending && b.ID.Sequence == 1 && b.Predecessor == nil && len(checkpoints) == 0 {
+		if b.Pending && b.ID.Sequence == 1 && b.Predecessor == nil && (len(checkpoints) == 0 && b.PriorEpoch == nil || priorMatches()) {
 			return nil
 		}
 		return refuse("missing matching checkpoint or unvalidated epoch")

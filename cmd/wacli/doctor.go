@@ -154,9 +154,12 @@ func newDoctorCmd(flags *rootFlags) *cobra.Command {
 				return err
 			}
 
+			// Offline diagnostics never open or drain a writable session.
+			// App schema migrations still run under the exclusive lock when available.
+			readOnly := flags.isReadOnly()
 			var lockHeld bool
 			var lockInfo string
-			if flags.isReadOnly() {
+			if readOnly {
 				if connect {
 					return flags.requireWritable()
 				}
@@ -176,11 +179,15 @@ func newDoctorCmd(flags *rootFlags) *cobra.Command {
 				}
 			}
 
+			if lockHeld && !connect {
+				readOnly = true
+			}
+
 			var storeErr string
 			var db *store.DB
 			var a *appPkg.App
 			var closeFn func()
-			if flags.isReadOnly() {
+			if readOnly {
 				dbPath := filepath.Join(storeDir, "wacli.db")
 				roDB, err := store.OpenReadOnly(dbPath)
 				if err != nil {
@@ -190,7 +197,7 @@ func newDoctorCmd(flags *rootFlags) *cobra.Command {
 					closeFn = func() { _ = roDB.Close() }
 				}
 			} else {
-				appInstance, lk, err := newApp(ctx, flags, connect, true)
+				appInstance, lk, err := newApp(ctx, flags, true, true)
 				if err != nil {
 					storeErr = err.Error()
 				} else {
@@ -206,7 +213,7 @@ func newDoctorCmd(flags *rootFlags) *cobra.Command {
 			var authed bool
 			var connected bool
 			var linkedJID string
-			if flags.isReadOnly() {
+			if readOnly || !connect {
 				if roAuthed, roLinkedJID, err := readOnlyAuthStatus(storeDir); err == nil {
 					authed = roAuthed
 					linkedJID = roLinkedJID

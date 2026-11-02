@@ -267,6 +267,5 @@ func (c *Container) DeleteDevice(ctx context.Context, store *store.Device) error
 	if store.ID == nil {
 		return ErrDeviceIDMustBeSet
 	}
-	_, err := c.db.Exec(ctx, deleteDeviceQuery, store.ID)
-	return err
+	return c.deleteDeviceRetainingDelivery(ctx, store)
 }

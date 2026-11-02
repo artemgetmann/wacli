@@ -364,7 +364,7 @@
  		}
 --- /dev/null
 +++ b/appstate/delivery.go
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,174 @@
 +// Copyright (c) 2026 The wacli contributors
 +// SPDX-License-Identifier: MPL-2.0
 +package appstate
@@ -457,21 +457,33 @@
 +	if proc.DeliveryConsumer == nil {
 +		return nil
 +	}
++	var s store.AppStateDeliveryStore
++	var err error
 +	if proc.Store.ID == nil {
-+		if proc.DeliveryValidator != nil {
-+			return proc.DeliveryValidator(ctx, nil)
++		if lifecycle, ok := proc.Store.Container.(store.AppStateDeliveryLifecycle); ok {
++			s, err = lifecycle.RetiredAppStateDeliveryStore(ctx)
++			if err != nil {
++				return err
++			}
 +		}
-+		return nil
-+	}
-+	s, ok := proc.Store.AppState.(store.AppStateDeliveryStore)
-+	if !ok {
-+		return fmt.Errorf("durable app state consumer requires native delivery store")
++		if s == nil {
++			if proc.DeliveryValidator != nil {
++				return proc.DeliveryValidator(ctx, nil)
++			}
++			return nil
++		}
++	} else {
++		var ok bool
++		s, ok = proc.Store.AppState.(store.AppStateDeliveryStore)
++		if !ok {
++			return fmt.Errorf("durable app state consumer requires native delivery store")
++		}
 +	}
 +	boundary, err := s.AppStateDeliveryBoundary(ctx)
 +	if err != nil {
 +		return err
 +	}
-+	if boundary.Device != proc.Store.ID.String() {
++	if proc.Store.ID != nil && boundary.Device != proc.Store.ID.String() {
 +		return fmt.Errorf("app state delivery device mismatch")
 +	}
 +	pending, err := s.PendingAppStateDelivery(ctx)
@@ -601,7 +613,7 @@
  		return mutations, fmt.Errorf("failed to reset app state version in database: %w", err)
 --- /dev/null
 +++ b/appstate_delivery.go
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,171 @@
 +// Copyright (c) 2026 The wacli contributors
 +// SPDX-License-Identifier: MPL-2.0
 +package whatsmeow
@@ -632,8 +644,10 @@
 +		cli.appStateProc.DeliveryConsumer = nil
 +	} else {
 +		cli.appStateProc.DeliveryConsumer = func(ctx context.Context, d *store.AppStateDelivery) error {
-+			if err := cli.persistCoveredSDKDeliveryState(ctx, d); err != nil {
-+				return err
++			if !d.Boundary.Retired {
++				if err := cli.persistCoveredSDKDeliveryState(ctx, d); err != nil {
++					return err
++				}
 +			}
 +			return consumer(ctx, d)
 +		}
@@ -1830,7 +1844,7 @@
  		cli.eventHandlersLock.RUnlock()
 --- /dev/null
 +++ b/store/appstate_delivery.go
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,77 @@
 +// Copyright (c) 2026 The wacli contributors
 +// SPDX-License-Identifier: MPL-2.0
 +package store
@@ -1868,7 +1882,20 @@
 +
 +// AppStateDeliveryBoundary is durable native provenance, including after ACK.
 +// Fresh epochs describe a tracking boundary, not prior projection completeness.
++type AppStateEpochIdentity struct {
++	Device string
++	ID     AppStateDeliveryID
++}
++
++// AppStateDeliveryLifecycle exposes a bounded retired slot without credentials.
++// Consumers must finish or refuse it before admitting a replacement device.
++type AppStateDeliveryLifecycle interface {
++	RetiredAppStateDeliveryStore(context.Context) (AppStateDeliveryStore, error)
++}
++
 +type AppStateDeliveryBoundary struct {
++	Retired     bool
++	PriorEpoch  *AppStateEpochIdentity
 +	Device      string
 +	Epoch       string
 +	ID          AppStateDeliveryID
@@ -1897,7 +1924,7 @@
 +}
 --- /dev/null
 +++ b/store/sqlstore/appstate_delivery.go
-@@ -0,0 +1,236 @@
+@@ -0,0 +1,308 @@
 +// Copyright (c) 2026 The wacli contributors
 +// SPDX-License-Identifier: MPL-2.0
 +package sqlstore
@@ -1908,8 +1935,10 @@
 +	"crypto/sha256"
 +	"database/sql"
 +	"encoding/hex"
++	"encoding/json"
 +	"errors"
 +	"fmt"
++	"go.mau.fi/whatsmeow/types"
 +	"math"
 +
 +	"go.mau.fi/util/dbutil"
@@ -1917,6 +1946,9 @@
 +)
 +
 +func (s *SQLStore) StageAppStateDelivery(ctx context.Context, t store.AppStateTransition) (*store.AppStateDelivery, error) {
++	if s.retiredDelivery {
++		return nil, fmt.Errorf("retired delivery cannot accept new protocol state")
++	}
 +	if _, nested := s.db.Execable(ctx).(dbutil.Transaction); nested {
 +		return nil, fmt.Errorf("app state staging requires its own committed transaction")
 +	}
@@ -1951,7 +1983,7 @@
 +		if err := s.requireDurableAppStateTransaction(ctx); err != nil {
 +			return err
 +		}
-+		_, err := s.db.Exec(ctx, `INSERT INTO whatsmeow_app_state_delivery(jid,generation,sequence,epoch_kind) VALUES($1,$2,0,'fresh') ON CONFLICT(jid) DO NOTHING`, s.JID, hex.EncodeToString(entropy[:]))
++		err := s.ensureAppStateEpoch(ctx, hex.EncodeToString(entropy[:]))
 +		if err != nil {
 +			return err
 +		}
@@ -2008,7 +2040,7 @@
 +func (s *SQLStore) PendingAppStateDelivery(ctx context.Context) (*store.AppStateDelivery, error) {
 +	d := &store.AppStateDelivery{}
 +	var before, after, digest []byte
-+	err := s.db.QueryRow(ctx, `SELECT generation,sequence,name,kind,before_version,after_version,before_hash,after_hash,digest,payload FROM whatsmeow_app_state_delivery WHERE jid=$1 AND payload IS NOT NULL`, s.JID).Scan(&d.ID.Generation, &d.ID.Sequence, &d.Transition.Name, &d.Transition.Kind, &d.Transition.BeforeVersion, &d.Transition.AfterVersion, &before, &after, &digest, &d.Transition.Payload)
++	err := s.db.QueryRow(ctx, `SELECT generation,sequence,name,kind,before_version,after_version,before_hash,after_hash,digest,payload FROM `+s.deliveryTable()+` WHERE jid=$1 AND payload IS NOT NULL`, s.JID).Scan(&d.ID.Generation, &d.ID.Sequence, &d.Transition.Name, &d.Transition.Kind, &d.Transition.BeforeVersion, &d.Transition.AfterVersion, &before, &after, &digest, &d.Transition.Payload)
 +	if errors.Is(err, sql.ErrNoRows) {
 +		return nil, nil
 +	}
@@ -2045,7 +2077,7 @@
 +		if err := s.requireDurableAppStateTransaction(ctx); err != nil {
 +			return err
 +		}
-+		result, err := s.db.Exec(ctx, `UPDATE whatsmeow_app_state_delivery SET payload=NULL WHERE jid=$1 AND generation=$2 AND sequence=$3 AND digest=$4`, s.JID, id.Generation, id.Sequence, id.Digest[:])
++		result, err := s.db.Exec(ctx, `UPDATE `+s.deliveryTable()+` SET payload=NULL WHERE jid=$1 AND generation=$2 AND sequence=$3 AND digest=$4`, s.JID, id.Generation, id.Sequence, id.Digest[:])
 +		if err != nil {
 +			return err
 +		}
@@ -2079,26 +2111,40 @@
 +	if _, nested := s.db.Execable(ctx).(dbutil.Transaction); nested {
 +		return nil, fmt.Errorf("boundary requires its own committed transaction")
 +	}
-+	var entropy [16]byte
-+	if _, err := rand.Read(entropy[:]); err != nil {
-+		return nil, err
-+	}
-+	if err := s.db.DoTxn(ctx, nil, func(ctx context.Context) error {
-+		if err := s.requireDurableAppStateTransaction(ctx); err != nil {
-+			return err
++	if !s.retiredDelivery {
++		var entropy [16]byte
++		if _, err := rand.Read(entropy[:]); err != nil {
++			return nil, err
 +		}
-+		_, err := s.db.Exec(ctx, `INSERT INTO whatsmeow_app_state_delivery(jid,generation,sequence,epoch_kind) VALUES($1,$2,0,'fresh') ON CONFLICT(jid) DO NOTHING`, s.JID, hex.EncodeToString(entropy[:]))
-+		return err
-+	}); err != nil {
-+		return nil, err
++		if err := s.db.DoTxn(ctx, nil, func(ctx context.Context) error {
++			if err := s.requireDurableAppStateTransaction(ctx); err != nil {
++				return err
++			}
++			return s.ensureAppStateEpoch(ctx, hex.EncodeToString(entropy[:]))
++		}); err != nil {
++			return nil, err
++		}
 +	}
-+	b := &store.AppStateDeliveryBoundary{Device: s.JID}
++	return s.readAppStateBoundary(ctx)
++}
++
++func (s *SQLStore) readAppStateBoundary(ctx context.Context) (*store.AppStateDeliveryBoundary, error) {
++	b := &store.AppStateDeliveryBoundary{Device: s.JID, Retired: s.retiredDelivery}
 +	var name sql.NullString
 +	var version, prev sql.NullInt64
-+	var hash, digest, pred []byte
-+	err := s.db.QueryRow(ctx, `SELECT generation,sequence,epoch_kind,name,after_version,after_hash,digest,payload IS NOT NULL,predecessor_sequence,predecessor_digest FROM whatsmeow_app_state_delivery WHERE jid=$1`, s.JID).Scan(&b.ID.Generation, &b.ID.Sequence, &b.Epoch, &name, &version, &hash, &digest, &b.Pending, &prev, &pred)
++	var hash, digest, pred, prior []byte
++	err := s.db.QueryRow(ctx, `SELECT generation,sequence,epoch_kind,name,after_version,after_hash,digest,payload IS NOT NULL,predecessor_sequence,predecessor_digest,prior_epoch FROM `+s.deliveryTable()+` WHERE jid=$1`, s.JID).Scan(&b.ID.Generation, &b.ID.Sequence, &b.Epoch, &name, &version, &hash, &digest, &b.Pending, &prev, &pred, &prior)
 +	if err != nil {
 +		return nil, err
++	}
++	if len(prior) > 0 {
++		b.PriorEpoch = &store.AppStateEpochIdentity{}
++		if err = json.Unmarshal(prior, b.PriorEpoch); err != nil {
++			return nil, err
++		}
++		if b.PriorEpoch.Device == "" || b.PriorEpoch.ID.Generation == "" || b.PriorEpoch.ID.Sequence == 0 {
++			return nil, fmt.Errorf("invalid prior epoch witness")
++		}
 +	}
 +	if b.ID.Generation == "" || (b.Epoch != "fresh" && b.Epoch != "legacy17") {
 +		return nil, fmt.Errorf("invalid native app state epoch")
@@ -2125,6 +2171,9 @@
 +	} else if b.ID.Sequence > 1 && b.Epoch != "legacy17" {
 +		return nil, fmt.Errorf("missing native predecessor identity")
 +	}
++	if s.retiredDelivery {
++		return b, nil
++	}
 +	v, h, err := s.GetAppStateVersion(ctx, b.Name)
 +	if err != nil {
 +		return nil, err
@@ -2133,6 +2182,56 @@
 +		return nil, fmt.Errorf("app state boundary cursor/hash mismatch; preserve matching stores")
 +	}
 +	return b, nil
++}
++
++func (s *SQLStore) deliveryTable() string {
++	if s.retiredDelivery {
++		return "whatsmeow_app_state_retired_delivery"
++	}
++	return "whatsmeow_app_state_delivery"
++}
++
++func (s *SQLStore) ensureAppStateEpoch(ctx context.Context, generation string) error {
++	var count int
++	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM whatsmeow_app_state_delivery WHERE jid=$1`, s.JID).Scan(&count); err != nil {
++		return err
++	}
++	if count != 0 {
++		return nil
++	}
++	retired, err := s.Container.RetiredAppStateDeliveryStore(ctx)
++	if err != nil {
++		return err
++	}
++	var prior []byte
++	if retired != nil {
++		b, err := retired.(*SQLStore).readAppStateBoundary(ctx)
++		if err != nil {
++			return err
++		}
++		if b.Pending {
++			return store.ErrAppStateDeliveryPending
++		}
++		old, err := types.ParseJID(b.Device)
++		if err != nil {
++			return err
++		}
++		current, err := types.ParseJID(s.JID)
++		if err != nil {
++			return err
++		}
++		if old.User != current.User || old.Server != current.Server {
++			return fmt.Errorf("replacement device belongs to a different account; use a separate store")
++		}
++		if b.ID.Sequence > 0 {
++			prior, err = json.Marshal(store.AppStateEpochIdentity{Device: b.Device, ID: b.ID})
++			if err != nil {
++				return err
++			}
++		}
++	}
++	_, err = s.db.Exec(ctx, `INSERT INTO whatsmeow_app_state_delivery(jid,generation,sequence,epoch_kind,prior_epoch) VALUES($1,$2,0,'fresh',$3) ON CONFLICT(jid) DO NOTHING`, s.JID, generation, prior)
++	return err
 +}
 --- /dev/null
 +++ b/store/sqlstore/appstate_delivery_test.go
@@ -2172,6 +2271,115 @@
 +	}
 +}
 --- /dev/null
++++ b/store/sqlstore/appstate_retirement.go
+@@ -0,0 +1,83 @@
++// Copyright (c) 2026 The wacli contributors
++// SPDX-License-Identifier: MPL-2.0
++package sqlstore
++
++import (
++	"context"
++	"database/sql"
++	"errors"
++	"fmt"
++
++	"go.mau.fi/util/dbutil"
++	"go.mau.fi/whatsmeow/store"
++	"go.mau.fi/whatsmeow/types"
++)
++
++// RetiredAppStateDeliveryStore exposes exactly one terminal, noncredential slot.
++// The row is written in the credential-delete transaction, never by a callback.
++func (c *Container) RetiredAppStateDeliveryStore(ctx context.Context) (store.AppStateDeliveryStore, error) {
++	var jid string
++	err := c.db.QueryRow(ctx, `SELECT jid FROM whatsmeow_app_state_retired_delivery WHERE slot=1`).Scan(&jid)
++	if errors.Is(err, sql.ErrNoRows) {
++		return nil, nil
++	}
++	if err != nil {
++		return nil, err
++	}
++	parsed, err := types.ParseJID(jid)
++	if err != nil {
++		return nil, err
++	}
++	s := NewSQLStore(c, parsed)
++	s.retiredDelivery = true
++	return s, nil
++}
++
++func (c *Container) deleteDeviceRetainingDelivery(ctx context.Context, device *store.Device) error {
++	if _, nested := c.db.Execable(ctx).(dbutil.Transaction); nested {
++		return fmt.Errorf("credential deletion requires its own committed transaction")
++	}
++	s := NewSQLStore(c, *device.ID)
++	return c.db.DoTxn(ctx, nil, func(ctx context.Context) error {
++		if err := s.requireDurableAppStateTransaction(ctx); err != nil {
++			return err
++		}
++		var count int
++		if err := c.db.QueryRow(ctx, `SELECT COUNT(*) FROM whatsmeow_app_state_delivery WHERE jid=$1`, device.ID.String()).Scan(&count); err != nil {
++			return err
++		}
++		if count != 0 {
++			b, err := s.readAppStateBoundary(ctx)
++			if err != nil {
++				return err
++			}
++			previous, err := c.RetiredAppStateDeliveryStore(ctx)
++			if err != nil {
++				return err
++			}
++			// A never-consumed replacement preserves the last meaningful retired epoch.
++			if b.ID.Sequence > 0 || previous == nil {
++				if previous != nil {
++					old, err := previous.(*SQLStore).readAppStateBoundary(ctx)
++					if err != nil {
++						return err
++					}
++					if old.Pending || b.PriorEpoch == nil || b.PriorEpoch.Device != old.Device || b.PriorEpoch.ID != old.ID {
++						return fmt.Errorf("unresolved retired app state epoch; credential deletion not committed")
++					}
++				}
++				const columns = "jid,generation,sequence,name,kind,before_version,after_version,before_hash,after_hash,digest,payload,epoch_kind,predecessor_sequence,predecessor_digest,prior_epoch"
++				if _, err = c.db.Exec(ctx, `DELETE FROM whatsmeow_app_state_retired_delivery WHERE slot=1`); err != nil {
++					return err
++				}
++				if _, err = c.db.Exec(ctx, `INSERT INTO whatsmeow_app_state_retired_delivery(slot,`+columns+`) SELECT 1,`+columns+` FROM whatsmeow_app_state_delivery WHERE jid=$1`, s.JID); err != nil {
++					return err
++				}
++			}
++		}
++		_, err := c.db.Exec(ctx, deleteDeviceQuery, device.ID)
++		return err
++	})
++}
++
++var _ store.AppStateDeliveryLifecycle = (*Container)(nil)
+--- a/store/sqlstore/container.go
++++ b/store/sqlstore/container.go
+@@ -267,6 +267,5 @@
+ 	if store.ID == nil {
+ 		return ErrDeviceIDMustBeSet
+ 	}
+-	_, err := c.db.Exec(ctx, deleteDeviceQuery, store.ID)
+-	return err
+-}
++	return c.deleteDeviceRetainingDelivery(ctx, store)
++}
+--- a/store/sqlstore/store.go
++++ b/store/sqlstore/store.go
+@@ -43,7 +43,8 @@
+ 
+ type SQLStore struct {
+ 	*Container
+-	JID string
++	JID             string
++	retiredDelivery bool
+ 
+ 	preKeyLock sync.Mutex
+ 
+--- /dev/null
 +++ b/store/sqlstore/upgrades/17-appstate-delivery.sql
 @@ -0,0 +1,14 @@
 +-- v16 -> v17: One outstanding verified app-state delivery per device store
@@ -2195,6 +2403,21 @@
 +ALTER TABLE whatsmeow_app_state_delivery ADD COLUMN epoch_kind TEXT NOT NULL DEFAULT 'legacy17';
 +ALTER TABLE whatsmeow_app_state_delivery ADD COLUMN predecessor_sequence BIGINT;
 +ALTER TABLE whatsmeow_app_state_delivery ADD COLUMN predecessor_digest bytea;
+--- /dev/null
++++ b/store/sqlstore/upgrades/19-appstate-retirement.sql
+@@ -0,0 +1,12 @@
++-- v18 -> v19: Retain one retired delivery independently of credential deletion
++ALTER TABLE whatsmeow_app_state_delivery ADD COLUMN prior_epoch bytea;
++CREATE TABLE whatsmeow_app_state_retired_delivery (
++ slot INTEGER PRIMARY KEY CHECK(slot=1),
++ jid TEXT NOT NULL,
++ generation TEXT NOT NULL,
++ sequence BIGINT NOT NULL CHECK(sequence>=0),
++ name TEXT,kind TEXT,before_version BIGINT,after_version BIGINT,
++ before_hash bytea,after_hash bytea,digest bytea,payload bytea,
++ epoch_kind TEXT NOT NULL,
++ predecessor_sequence BIGINT,predecessor_digest bytea,prior_epoch bytea
++);
 --- a/types/events/appstate.go
 +++ b/types/events/appstate.go
 @@ -11,13 +11,16 @@

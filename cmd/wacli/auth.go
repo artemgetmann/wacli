@@ -269,7 +269,7 @@ func newAuthStatusCmd(flags *rootFlags) *cobra.Command {
 				return nil
 			}
 
-			a, lk, err := newApp(ctx, flags, false, true)
+			a, lk, err := newApp(ctx, flags, true, true)
 			if err != nil {
 				return err
 			}

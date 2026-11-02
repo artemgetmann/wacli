@@ -8,8 +8,10 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"go.mau.fi/whatsmeow/types"
 	"math"
 
 	"go.mau.fi/util/dbutil"
@@ -17,6 +19,9 @@ import (
 )
 
 func (s *SQLStore) StageAppStateDelivery(ctx context.Context, t store.AppStateTransition) (*store.AppStateDelivery, error) {
+	if s.retiredDelivery {
+		return nil, fmt.Errorf("retired delivery cannot accept new protocol state")
+	}
 	if _, nested := s.db.Execable(ctx).(dbutil.Transaction); nested {
 		return nil, fmt.Errorf("app state staging requires its own committed transaction")
 	}
@@ -51,7 +56,7 @@ func (s *SQLStore) StageAppStateDelivery(ctx context.Context, t store.AppStateTr
 		if err := s.requireDurableAppStateTransaction(ctx); err != nil {
 			return err
 		}
-		_, err := s.db.Exec(ctx, `INSERT INTO whatsmeow_app_state_delivery(jid,generation,sequence,epoch_kind) VALUES($1,$2,0,'fresh') ON CONFLICT(jid) DO NOTHING`, s.JID, hex.EncodeToString(entropy[:]))
+		err := s.ensureAppStateEpoch(ctx, hex.EncodeToString(entropy[:]))
 		if err != nil {
 			return err
 		}
@@ -108,7 +113,7 @@ func (s *SQLStore) StageAppStateDelivery(ctx context.Context, t store.AppStateTr
 func (s *SQLStore) PendingAppStateDelivery(ctx context.Context) (*store.AppStateDelivery, error) {
 	d := &store.AppStateDelivery{}
 	var before, after, digest []byte
-	err := s.db.QueryRow(ctx, `SELECT generation,sequence,name,kind,before_version,after_version,before_hash,after_hash,digest,payload FROM whatsmeow_app_state_delivery WHERE jid=$1 AND payload IS NOT NULL`, s.JID).Scan(&d.ID.Generation, &d.ID.Sequence, &d.Transition.Name, &d.Transition.Kind, &d.Transition.BeforeVersion, &d.Transition.AfterVersion, &before, &after, &digest, &d.Transition.Payload)
+	err := s.db.QueryRow(ctx, `SELECT generation,sequence,name,kind,before_version,after_version,before_hash,after_hash,digest,payload FROM `+s.deliveryTable()+` WHERE jid=$1 AND payload IS NOT NULL`, s.JID).Scan(&d.ID.Generation, &d.ID.Sequence, &d.Transition.Name, &d.Transition.Kind, &d.Transition.BeforeVersion, &d.Transition.AfterVersion, &before, &after, &digest, &d.Transition.Payload)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -145,7 +150,7 @@ func (s *SQLStore) AckAppStateDelivery(ctx context.Context, id store.AppStateDel
 		if err := s.requireDurableAppStateTransaction(ctx); err != nil {
 			return err
 		}
-		result, err := s.db.Exec(ctx, `UPDATE whatsmeow_app_state_delivery SET payload=NULL WHERE jid=$1 AND generation=$2 AND sequence=$3 AND digest=$4`, s.JID, id.Generation, id.Sequence, id.Digest[:])
+		result, err := s.db.Exec(ctx, `UPDATE `+s.deliveryTable()+` SET payload=NULL WHERE jid=$1 AND generation=$2 AND sequence=$3 AND digest=$4`, s.JID, id.Generation, id.Sequence, id.Digest[:])
 		if err != nil {
 			return err
 		}
@@ -179,26 +184,40 @@ func (s *SQLStore) AppStateDeliveryBoundary(ctx context.Context) (*store.AppStat
 	if _, nested := s.db.Execable(ctx).(dbutil.Transaction); nested {
 		return nil, fmt.Errorf("boundary requires its own committed transaction")
 	}
-	var entropy [16]byte
-	if _, err := rand.Read(entropy[:]); err != nil {
-		return nil, err
-	}
-	if err := s.db.DoTxn(ctx, nil, func(ctx context.Context) error {
-		if err := s.requireDurableAppStateTransaction(ctx); err != nil {
-			return err
+	if !s.retiredDelivery {
+		var entropy [16]byte
+		if _, err := rand.Read(entropy[:]); err != nil {
+			return nil, err
 		}
-		_, err := s.db.Exec(ctx, `INSERT INTO whatsmeow_app_state_delivery(jid,generation,sequence,epoch_kind) VALUES($1,$2,0,'fresh') ON CONFLICT(jid) DO NOTHING`, s.JID, hex.EncodeToString(entropy[:]))
-		return err
-	}); err != nil {
-		return nil, err
+		if err := s.db.DoTxn(ctx, nil, func(ctx context.Context) error {
+			if err := s.requireDurableAppStateTransaction(ctx); err != nil {
+				return err
+			}
+			return s.ensureAppStateEpoch(ctx, hex.EncodeToString(entropy[:]))
+		}); err != nil {
+			return nil, err
+		}
 	}
-	b := &store.AppStateDeliveryBoundary{Device: s.JID}
+	return s.readAppStateBoundary(ctx)
+}
+
+func (s *SQLStore) readAppStateBoundary(ctx context.Context) (*store.AppStateDeliveryBoundary, error) {
+	b := &store.AppStateDeliveryBoundary{Device: s.JID, Retired: s.retiredDelivery}
 	var name sql.NullString
 	var version, prev sql.NullInt64
-	var hash, digest, pred []byte
-	err := s.db.QueryRow(ctx, `SELECT generation,sequence,epoch_kind,name,after_version,after_hash,digest,payload IS NOT NULL,predecessor_sequence,predecessor_digest FROM whatsmeow_app_state_delivery WHERE jid=$1`, s.JID).Scan(&b.ID.Generation, &b.ID.Sequence, &b.Epoch, &name, &version, &hash, &digest, &b.Pending, &prev, &pred)
+	var hash, digest, pred, prior []byte
+	err := s.db.QueryRow(ctx, `SELECT generation,sequence,epoch_kind,name,after_version,after_hash,digest,payload IS NOT NULL,predecessor_sequence,predecessor_digest,prior_epoch FROM `+s.deliveryTable()+` WHERE jid=$1`, s.JID).Scan(&b.ID.Generation, &b.ID.Sequence, &b.Epoch, &name, &version, &hash, &digest, &b.Pending, &prev, &pred, &prior)
 	if err != nil {
 		return nil, err
+	}
+	if len(prior) > 0 {
+		b.PriorEpoch = &store.AppStateEpochIdentity{}
+		if err = json.Unmarshal(prior, b.PriorEpoch); err != nil {
+			return nil, err
+		}
+		if b.PriorEpoch.Device == "" || b.PriorEpoch.ID.Generation == "" || b.PriorEpoch.ID.Sequence == 0 {
+			return nil, fmt.Errorf("invalid prior epoch witness")
+		}
 	}
 	if b.ID.Generation == "" || (b.Epoch != "fresh" && b.Epoch != "legacy17") {
 		return nil, fmt.Errorf("invalid native app state epoch")
@@ -225,6 +244,9 @@ func (s *SQLStore) AppStateDeliveryBoundary(ctx context.Context) (*store.AppStat
 	} else if b.ID.Sequence > 1 && b.Epoch != "legacy17" {
 		return nil, fmt.Errorf("missing native predecessor identity")
 	}
+	if s.retiredDelivery {
+		return b, nil
+	}
 	v, h, err := s.GetAppStateVersion(ctx, b.Name)
 	if err != nil {
 		return nil, err
@@ -233,4 +255,54 @@ func (s *SQLStore) AppStateDeliveryBoundary(ctx context.Context) (*store.AppStat
 		return nil, fmt.Errorf("app state boundary cursor/hash mismatch; preserve matching stores")
 	}
 	return b, nil
+}
+
+func (s *SQLStore) deliveryTable() string {
+	if s.retiredDelivery {
+		return "whatsmeow_app_state_retired_delivery"
+	}
+	return "whatsmeow_app_state_delivery"
+}
+
+func (s *SQLStore) ensureAppStateEpoch(ctx context.Context, generation string) error {
+	var count int
+	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM whatsmeow_app_state_delivery WHERE jid=$1`, s.JID).Scan(&count); err != nil {
+		return err
+	}
+	if count != 0 {
+		return nil
+	}
+	retired, err := s.Container.RetiredAppStateDeliveryStore(ctx)
+	if err != nil {
+		return err
+	}
+	var prior []byte
+	if retired != nil {
+		b, err := retired.(*SQLStore).readAppStateBoundary(ctx)
+		if err != nil {
+			return err
+		}
+		if b.Pending {
+			return store.ErrAppStateDeliveryPending
+		}
+		old, err := types.ParseJID(b.Device)
+		if err != nil {
+			return err
+		}
+		current, err := types.ParseJID(s.JID)
+		if err != nil {
+			return err
+		}
+		if old.User != current.User || old.Server != current.Server {
+			return fmt.Errorf("replacement device belongs to a different account; use a separate store")
+		}
+		if b.ID.Sequence > 0 {
+			prior, err = json.Marshal(store.AppStateEpochIdentity{Device: b.Device, ID: b.ID})
+			if err != nil {
+				return err
+			}
+		}
+	}
+	_, err = s.db.Exec(ctx, `INSERT INTO whatsmeow_app_state_delivery(jid,generation,sequence,epoch_kind,prior_epoch) VALUES($1,$2,0,'fresh',$3) ON CONFLICT(jid) DO NOTHING`, s.JID, generation, prior)
+	return err
 }

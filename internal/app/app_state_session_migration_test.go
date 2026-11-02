@@ -25,7 +25,7 @@ func TestSessionDeliveryMigrationPreservesVersion16Cursor(t *testing.T) {
 	must(c.Close())
 	raw, err := sql.Open("sqlite3", sqliteutil.FileURI(path, "_foreign_keys=on&_synchronous=FULL"))
 	must(err)
-	_, err = raw.Exec(`DROP TABLE whatsmeow_app_state_delivery; UPDATE whatsmeow_version SET version=16,compat=16`)
+	_, err = raw.Exec(`DROP TABLE whatsmeow_app_state_retired_delivery; DROP TABLE whatsmeow_app_state_delivery; UPDATE whatsmeow_version SET version=16,compat=16`)
 	must(err)
 	must(raw.Close())
 	upgraded, err := sqlstore.New(ctx, "sqlite3", sqliteutil.FileURI(path, "_foreign_keys=on&_synchronous=FULL"), nil)
@@ -54,7 +54,7 @@ func TestSessionDeliveryMigrationPreservesVersion16Cursor(t *testing.T) {
 	defer raw.Close()
 	var schema, compat int
 	must(raw.QueryRow("SELECT version,compat FROM whatsmeow_version").Scan(&schema, &compat))
-	if schema != 18 || compat < 18 {
+	if schema != 19 || compat < 19 {
 		t.Fatalf("old SDK compatibility was not fenced: schema=%d compat=%d", schema, compat)
 	}
 }

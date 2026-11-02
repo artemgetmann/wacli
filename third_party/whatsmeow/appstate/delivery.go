@@ -90,21 +90,33 @@ func (proc *Processor) DrainAppStateDelivery(ctx context.Context) error {
 	if proc.DeliveryConsumer == nil {
 		return nil
 	}
+	var s store.AppStateDeliveryStore
+	var err error
 	if proc.Store.ID == nil {
-		if proc.DeliveryValidator != nil {
-			return proc.DeliveryValidator(ctx, nil)
+		if lifecycle, ok := proc.Store.Container.(store.AppStateDeliveryLifecycle); ok {
+			s, err = lifecycle.RetiredAppStateDeliveryStore(ctx)
+			if err != nil {
+				return err
+			}
 		}
-		return nil
-	}
-	s, ok := proc.Store.AppState.(store.AppStateDeliveryStore)
-	if !ok {
-		return fmt.Errorf("durable app state consumer requires native delivery store")
+		if s == nil {
+			if proc.DeliveryValidator != nil {
+				return proc.DeliveryValidator(ctx, nil)
+			}
+			return nil
+		}
+	} else {
+		var ok bool
+		s, ok = proc.Store.AppState.(store.AppStateDeliveryStore)
+		if !ok {
+			return fmt.Errorf("durable app state consumer requires native delivery store")
+		}
 	}
 	boundary, err := s.AppStateDeliveryBoundary(ctx)
 	if err != nil {
 		return err
 	}
-	if boundary.Device != proc.Store.ID.String() {
+	if proc.Store.ID != nil && boundary.Device != proc.Store.ID.String() {
 		return fmt.Errorf("app state delivery device mismatch")
 	}
 	pending, err := s.PendingAppStateDelivery(ctx)

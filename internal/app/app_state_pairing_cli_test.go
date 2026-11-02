@@ -80,7 +80,7 @@ func (r *pairingFixture) pending() {
 }
 func (r *pairingFixture) legacy17() {
 	r.t.Helper()
-	r.exec(r.native, `ALTER TABLE whatsmeow_app_state_delivery DROP COLUMN epoch_kind; ALTER TABLE whatsmeow_app_state_delivery DROP COLUMN predecessor_sequence; ALTER TABLE whatsmeow_app_state_delivery DROP COLUMN predecessor_digest; UPDATE whatsmeow_version SET version=17,compat=17`)
+	r.exec(r.native, `DROP TABLE whatsmeow_app_state_retired_delivery; ALTER TABLE whatsmeow_app_state_delivery DROP COLUMN prior_epoch; ALTER TABLE whatsmeow_app_state_delivery DROP COLUMN epoch_kind; ALTER TABLE whatsmeow_app_state_delivery DROP COLUMN predecessor_sequence; ALTER TABLE whatsmeow_app_state_delivery DROP COLUMN predecessor_digest; UPDATE whatsmeow_version SET version=17,compat=17`)
 	r.exec(r.app, `ALTER TABLE app_state_delivery_checkpoint DROP COLUMN device_jid; DELETE FROM schema_migrations WHERE version=35`)
 }
 func (r *pairingFixture) nativeEvidence() []byte {
@@ -111,7 +111,7 @@ func TestAppStatePairingCLI(t *testing.T) {
 			if tc.name == "normal16-upgrade" {
 				r.must(r.a.db.SetChatPinned(r.jid.String(), true))
 				r.must(r.d.AppState.PutAppStateVersion(t.Context(), "regular_low", 7, [128]byte{7}))
-				r.exec(r.native, `DROP TABLE whatsmeow_app_state_delivery;UPDATE whatsmeow_version SET version=16,compat=16`)
+				r.exec(r.native, `DROP TABLE whatsmeow_app_state_retired_delivery;DROP TABLE whatsmeow_app_state_delivery;UPDATE whatsmeow_version SET version=16,compat=16`)
 				h.write(r.a.StoreDir(), "auth", "status")
 				var epoch string
 				var seq uint64
