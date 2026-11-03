@@ -269,13 +269,13 @@ func newAuthStatusCmd(flags *rootFlags) *cobra.Command {
 				return nil
 			}
 
-			a, lk, err := newApp(ctx, flags, false, true)
+			a, lk, err := newApp(ctx, flags, true, true)
 			if err != nil {
 				return err
 			}
 			defer closeApp(a, lk)
 
-			if err := a.OpenWA(); err != nil {
+			if err := a.OpenWAContext(ctx); err != nil {
 				return err
 			}
 			authed := a.WA().IsAuthed()

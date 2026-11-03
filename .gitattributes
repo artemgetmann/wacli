@@ -1,0 +1,4 @@
+
+# Diff context and the pristine upstream license retain significant source bytes.
+third_party/whatsmeow-patches/*.patch -whitespace
+third_party/whatsmeow/LICENSE -whitespace

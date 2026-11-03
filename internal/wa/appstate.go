@@ -66,3 +66,18 @@ func (c *Client) MuteChat(ctx context.Context, target types.JID, mute bool, dura
 func (c *Client) MarkChatAsRead(ctx context.Context, target types.JID, read bool, lastMsgTS time.Time, lastMsgKey *waCommon.MessageKey, beforeApply func()) ([]any, error) {
 	return c.sendAppStateWithBoundary(ctx, appstate.BuildMarkChatAsRead(target, read, lastMsgTS, lastMsgKey), beforeApply)
 }
+
+// DrainAppStateDelivery applies pending local projection before network work.
+func (c *Client) DrainAppStateDelivery(ctx context.Context) error {
+	c.mu.Lock()
+	cli := c.client
+	c.mu.Unlock()
+	if cli == nil {
+		return fmt.Errorf("session is not open")
+	}
+	return cli.DrainAppStateDelivery(ctx)
+}
+
+// DurableChatStateProjection reports the configured covered-action contract.
+// Contact, Star and generic actions retain their existing completion paths.
+func (c *Client) DurableChatStateProjection() bool { return c.opts.AppStateConsumer != nil }

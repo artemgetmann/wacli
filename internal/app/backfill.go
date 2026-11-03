@@ -65,7 +65,7 @@ func (a *App) BackfillHistory(ctx context.Context, opts BackfillOptions) (Backfi
 	if err := a.EnsureAuthed(ctx); err != nil {
 		return BackfillResult{}, err
 	}
-	if err := a.OpenWA(); err != nil {
+	if err := a.OpenWAContext(ctx); err != nil {
 		return BackfillResult{}, err
 	}
 	a.wa.SetManualHistorySyncDownload(true)

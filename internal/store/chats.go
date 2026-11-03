@@ -134,15 +134,18 @@ func (d *DB) SetChatMutedUntil(jid string, mutedUntil int64) error {
 }
 
 func (d *DB) SetChatUnread(jid string, unread bool) error {
+	return setChatUnreadOn(d.sql, jid, unread)
+}
+func setChatUnreadOn(db stateExecer, jid string, unread bool) error {
 	if unread {
-		_, err := d.sql.ExecContext(storeCtx(), `
+		_, err := db.ExecContext(storeCtx(), `
 			INSERT INTO chats(jid, kind, unread)
 			VALUES(?, 'unknown', 1)
 			ON CONFLICT(jid) DO UPDATE SET unread=1
 		`, jid)
 		return err
 	}
-	_, err := d.sql.ExecContext(storeCtx(), `
+	_, err := db.ExecContext(storeCtx(), `
 		INSERT INTO chats(jid, kind, unread, unread_count)
 		VALUES(?, 'unknown', 0, 0)
 		ON CONFLICT(jid) DO UPDATE SET unread=0, unread_count=0

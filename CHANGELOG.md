@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Sync: retain verified pending chat-state evidence across credential deletion and validate same-account replacement epochs without clearing history. Refuse ambiguous or uncovered retired work. Writable auth status now retains the store lock; offline doctor avoids draining pending updates and retains the lock for App migrations. Delayed starring callback ordering remains outside the covered guarantee.
+
+- Sync: retain verified chat-state updates through an atomic local projection/checkpoint handoff, replay pending updates on startup, and report incomplete local persistence separately from request acceptance. Preserve newer unread state and existing uncovered-feature recovery.
+
 - Sync: keep valid delivery/read receipts after malformed entries in the same batch, report invalid input separately from storage failures, and keep incomplete syncs from advancing freshness. Thanks @jesusvillota (#537).
 
 ## 0.25.1 - 2026-10-26

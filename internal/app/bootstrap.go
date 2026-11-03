@@ -9,7 +9,7 @@ import (
 )
 
 func (a *App) refreshContacts(ctx context.Context) error {
-	if err := a.OpenWA(); err != nil {
+	if err := a.OpenWAContext(ctx); err != nil {
 		return err
 	}
 	contacts, err := a.wa.GetAllContacts(ctx)
@@ -31,7 +31,7 @@ func (a *App) refreshContacts(ctx context.Context) error {
 }
 
 func (a *App) refreshGroups(ctx context.Context) error {
-	if err := a.OpenWA(); err != nil {
+	if err := a.OpenWAContext(ctx); err != nil {
 		return err
 	}
 	groups, err := a.wa.GetJoinedGroups(ctx)
@@ -82,7 +82,7 @@ func (a *App) storeGroupInfo(ctx context.Context, group *types.GroupInfo) error 
 }
 
 func (a *App) refreshNewsletters(ctx context.Context) error {
-	if err := a.OpenWA(); err != nil {
+	if err := a.OpenWAContext(ctx); err != nil {
 		return err
 	}
 	list, err := a.wa.GetSubscribedNewsletters(ctx)

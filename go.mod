@@ -77,3 +77,6 @@ require (
 )
 
 tool github.com/sqlc-dev/sqlc/cmd/sqlc
+
+// Reviewable pinned SDK source carry; see third_party/whatsmeow-patches.
+replace go.mau.fi/whatsmeow => ./third_party/whatsmeow

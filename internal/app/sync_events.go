@@ -310,7 +310,9 @@ func syncActivityEvent(evt any) bool {
 // onPersisted runs at the ordered write boundary, including when this event
 // was queued behind startup replay. Sync uses it to track freshness safely.
 func (a *App) handleAppStatePersistenceEvent(ctx context.Context, evt any, onPersisted func(error)) {
-	a.observeArchiveEvent(ctx, evt, false)
+	if deliveryIDForEvent(evt) == nil {
+		a.observeArchiveEvent(ctx, evt, false)
+	}
 	report := func(err error) {
 		if onPersisted != nil {
 			onPersisted(err)
@@ -396,6 +398,17 @@ func (a *App) clearLiveAppStateRecovery(markers []appStateRecoveryMarker) {
 }
 
 func (a *App) persistAppStateEvent(ctx context.Context, evt any, tracker *appStatePersistenceTracker) error {
+	if id := deliveryIDForEvent(evt); id != nil {
+		done, err := a.db.HasAppStateDeliveryCheckpoint(ctx, deliveryCheckpoint(*id))
+		if err == nil && !done {
+			err = fmt.Errorf("app state projection pending for delivered event")
+		}
+		if tracker != nil {
+			tracker.record(err)
+		}
+		return err
+	}
+
 	var err error
 	switch v := evt.(type) {
 	case *events.AppState:

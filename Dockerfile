@@ -5,6 +5,7 @@ RUN apk add --no-cache --upgrade ca-certificates=20261020-r0 ca-certificates-bun
 RUN apk add --no-cache build-base ca-certificates git
 WORKDIR /src
 COPY go.mod go.sum ./
+COPY third_party/whatsmeow/go.mod third_party/whatsmeow/go.sum ./third_party/whatsmeow/
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=1 CGO_CFLAGS="-Wno-error=missing-braces" GOOS=linux \
