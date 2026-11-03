@@ -196,13 +196,17 @@ func (a *App) addSyncEventHandler(ctx context.Context, opts SyncOptions, message
 				"app_data_changes": v.AppDataChanges,
 			}, "\nReplaying offline backlog: %d message(s), %d event(s) total.\n", v.Messages, v.Total)
 		case *events.OfflineSyncCompleted:
+			freshnessRecorded := false
 			if ctx.Err() == nil && limits.canRecordFreshness() && a.wa.IsConnected() && a.wa.IsAuthed() {
 				if err := a.db.RecordSuccessfulSync(nowUTC()); err != nil {
 					a.emitWarning("sync_state_write_failed", fmt.Sprintf("record successful sync: %v", err), nil)
+				} else {
+					freshnessRecorded = true
 				}
 			}
 			a.emitOrPrint("offline_sync_completed", map[string]any{
-				"count": v.Count,
+				"count":              v.Count,
+				"freshness_recorded": freshnessRecorded,
 			}, "\nOffline backlog replayed (%d event(s)).\n", v.Count)
 		case *events.Connected:
 			// Group changes made while disconnected may not all come back as

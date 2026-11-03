@@ -45,6 +45,18 @@ cursors until the next ordinary writable store open applies migrations.
 `last_sync_at` is null until a successful connected one-shot/bootstrap sync or
 an offline-backlog completion is recorded. Doctor uses this same state.
 Heartbeats and the newest message timestamp do not establish successful sync.
+The `offline_sync_completed` event reports `freshness_recorded: true` only when
+that event successfully persisted this milestone. `false` means it did not;
+a previous milestone can remain present. Consumers of older event schemas must
+treat an absent field as unknown, not success. Replay completion alone is not
+proof that the milestone advanced.
+
+This milestone is not a continuous activity clock: healthy follow sessions can
+receive new messages without advancing it. A failed receipt keeps the current
+Sync invocation from recording a later milestone, even after reconnect. A new
+Sync invocation can record one without recovering receipts skipped previously.
+Neither a recent milestone nor a clean restart certifies historical receipt
+completeness.
 
 All results describe retained local history only. A finished page traversal and
 a recent sync do not certify complete WhatsApp history or continuous connectivity.
