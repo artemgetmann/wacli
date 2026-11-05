@@ -1,0 +1,32 @@
+{
+  "kind": "separate authorized original-parser trial; NOT installed-fix validation",
+  "diagnostic_source": "28c3a4594a796ac794450f2d69877562867a5d4c",
+  "parser_base": "19d1d0715c99f236d07dd5b1d9bbad0eb7a70f50",
+  "fix_installed": false,
+  "date": "2026-11-05",
+  "send_invocations": 1,
+  "transport_accepted": true,
+  "exact_local_message_verified": true,
+  "read_policy": "preserve",
+  "window": "one bounded <=15-minute window; no repetition",
+  "dedicated_diagnostic_output_bytes": 0,
+  "setup_evidence": "dedicated sink descriptor open by the exact diagnostic owner",
+  "live_diagnostic_positive_control": false,
+  "result": "no qualifying record; inconclusive",
+  "subsequent_exact_message_metadata_lookup": {
+    "receipt_rows": 1,
+    "status": "delivered",
+    "expected_peer_match": true,
+    "event_timestamp_within_window": true,
+    "ingestion_time_known": false
+  },
+  "original_service_restored_and_ready": true,
+  "limits": [
+    "Persisted delivery proves a normal receipt was stored for that message; it does not identify direct/list/key-based wire ancestry",
+    "One valid stored receipt does not exclude a separate malformed event",
+    "No diagnostic output cannot distinguish another shape, correlation/allowlist miss, late arrival or best-effort output loss",
+    "No live positive control confirmed send-ID reservation or diagnostic continuation; sink-open only confirms configuration activation",
+    "This proves neither historical cause/recovery nor live behavior of PR14"
+  ],
+  "omitted": "all group/account/message identifiers, phone numbers, payload text/timestamps, PIDs, private paths, configuration, raw receipt/log data, binary/archive and database backups"
+}

@@ -1,0 +1,149 @@
+{
+  "head": "11be29bf42e729731de5dbece6824f8456a02a47",
+  "steps": [
+    {
+      "name": "format",
+      "command": [
+        "<GO_TOOLCHAIN>/bin/gofmt",
+        "-l",
+        "."
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.288
+    },
+    {
+      "name": "vet",
+      "command": [
+        "go",
+        "vet",
+        "./..."
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 2.996
+    },
+    {
+      "name": "deadcode",
+      "command": [
+        "bash",
+        "scripts/check-deadcode.sh"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 33.266
+    },
+    {
+      "name": "go",
+      "command": [
+        "go",
+        "test",
+        "-json",
+        "-count=1",
+        "./..."
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 161.361
+    },
+    {
+      "name": "fts",
+      "command": [
+        "go",
+        "test",
+        "-json",
+        "-count=1",
+        "-tags",
+        "sqlite_fts5",
+        "./..."
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 173.493
+    },
+    {
+      "name": "windows",
+      "command": [
+        "bash",
+        "scripts/check-windows-lock.sh"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 1.585
+    },
+    {
+      "name": "cgo",
+      "command": [
+        "bash",
+        "-c",
+        "set +e; out=$(CGO_ENABLED=0 go build ./cmd/wacli 2>&1); status=$?; printf '%s' \"$out\" | grep -q wacli_requires_cgo_enabled_1_for_go_sqlite3; sentinel=$?; test $sentinel -eq 0 && test $status -ne 0"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.996
+    },
+    {
+      "name": "scripts",
+      "command": [
+        "node",
+        "--test",
+        "scripts/agent-boundary.test.mjs",
+        "scripts/docs-site-render.test.mjs",
+        "scripts/extract-release-notes.test.mjs",
+        "scripts/govulncheck.test.mjs",
+        "scripts/maintenance-policy.test.mjs",
+        "scripts/maintenance-promotion.test.mjs",
+        "scripts/release-go-version.test.mjs",
+        "scripts/release-workflow.test.mjs",
+        "scripts/toolchain.test.mjs"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 1.147
+    },
+    {
+      "name": "agent",
+      "command": [
+        "node",
+        "--experimental-strip-types",
+        "--test",
+        "agent/lib/keychain.test.ts",
+        "agent/lib/owner/live.test.ts",
+        "agent/lib/owner/store.test.ts",
+        "agent/lib/read/monitor-ack.test.ts",
+        "agent/lib/read/recent-reply.test.ts",
+        "agent/lib/send.test.ts",
+        "agent/lib/transcribe.test.ts"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 1.078
+    },
+    {
+      "name": "build",
+      "command": [
+        "go",
+        "build",
+        "-tags",
+        "sqlite_fts5",
+        "-o",
+        "dist/wacli",
+        "./cmd/wacli"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 4.548
+    },
+    {
+      "name": "docs",
+      "command": [
+        "node",
+        "scripts/build-docs-site.mjs"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.08
+    },
+    {
+      "name": "diff",
+      "command": [
+        "git",
+        "diff",
+        "HEAD",
+        "--check"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.02
+    }
+  ],
+  "pnpm_wrapper": "ENOEXEC; direct script equivalents"
+}

@@ -1,0 +1,52 @@
+{
+  "full-gate/plain-results.ndjson": {
+    "named_test_events": {
+      "pass": 2084,
+      "skip": 11
+    },
+    "skipped_tests": [
+      "TestAppStateDeliveryTransactionWorker",
+      "TestLibsignalOutputHelper",
+      "TestJSONClosedStdoutHelper",
+      "TestPresenceDelegateHelper",
+      "TestAppStateDeliveryGapWorker",
+      "TestInterleavedRecoveryDebtWorker",
+      "TestAppStatePairingFencesPreviousCLI",
+      "TestAppStatePairingMigrationWorker",
+      "TestUncoveredDeliveryRecoveryWorker",
+      "TestPreviousPublishedWriterRefusesRetirementSchema",
+      "TestDeviceDeletionWorker"
+    ],
+    "package_verdicts": 17
+  },
+  "full-gate/fts-results.ndjson": {
+    "named_test_events": {
+      "pass": 2112,
+      "skip": 11
+    },
+    "skipped_tests": [
+      "TestAppStateDeliveryTransactionWorker",
+      "TestLibsignalOutputHelper",
+      "TestJSONClosedStdoutHelper",
+      "TestPresenceDelegateHelper",
+      "TestAppStateDeliveryGapWorker",
+      "TestInterleavedRecoveryDebtWorker",
+      "TestAppStatePairingFencesPreviousCLI",
+      "TestAppStatePairingMigrationWorker",
+      "TestUncoveredDeliveryRecoveryWorker",
+      "TestPreviousPublishedWriterRefusesRetirementSchema",
+      "TestDeviceDeletionWorker"
+    ],
+    "package_verdicts": 17
+  },
+  "after/sdk-results.ndjson": {
+    "named_test_events": {
+      "pass": 17,
+      "skip": 1
+    },
+    "skipped_tests": [
+      "TestNativeDeliveryTransactionWorker"
+    ],
+    "package_verdicts": 78
+  }
+}

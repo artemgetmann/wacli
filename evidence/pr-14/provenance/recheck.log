@@ -1,0 +1,5 @@
+New read-only verification at publication: 2026-11-05T08:24:39.268227+00:00
+Source: 11be29bf42e729731de5dbece6824f8456a02a47
+Command (private pristine-module path normalized): python3 third_party/whatsmeow-patches/verify.py --upstream-dir <PINNED_PRISTINE_MODULE_DIR>
+Exit: 0
+SDK provenance verified: exact pinned source plus one explicit patch

@@ -1,0 +1,106 @@
+=== RUN   TestOutgoingReceiptValidation
+=== RUN   TestOutgoingReceiptValidation/blank
+=== RUN   TestOutgoingReceiptValidation/whitespace
+=== RUN   TestOutgoingReceiptValidation/invalid_before_valid
+=== RUN   TestOutgoingReceiptValidation/valid_before_invalid
+=== RUN   TestOutgoingReceiptValidation/valid_both_sides
+=== RUN   TestOutgoingReceiptValidation/valid_persistence
+=== RUN   TestOutgoingReceiptValidation/empty_sender_fallback
+=== RUN   TestOutgoingReceiptValidation/malformed_empty_user
+=== RUN   TestOutgoingReceiptValidation/malformed_whitespace_server
+=== RUN   TestOutgoingReceiptValidation/closed_store
+=== RUN   TestOutgoingReceiptValidation/sender_missing_server
+=== RUN   TestOutgoingReceiptValidation/sender_whitespace_user
+=== RUN   TestOutgoingReceiptValidation/sender_embedded_space
+=== RUN   TestOutgoingReceiptValidation/sender_embedded_at
+=== RUN   TestOutgoingReceiptValidation/malformed_chat
+=== RUN   TestOutgoingReceiptValidation/group_participant
+=== RUN   TestOutgoingReceiptValidation/group_missing_participant
+=== RUN   TestOutgoingReceiptValidation/linked_identity
+=== RUN   TestOutgoingReceiptValidation/phone_device
+--- PASS: TestOutgoingReceiptValidation (0.21s)
+    --- PASS: TestOutgoingReceiptValidation/blank (0.01s)
+    --- PASS: TestOutgoingReceiptValidation/whitespace (0.01s)
+    --- PASS: TestOutgoingReceiptValidation/invalid_before_valid (0.01s)
+    --- PASS: TestOutgoingReceiptValidation/valid_before_invalid (0.02s)
+    --- PASS: TestOutgoingReceiptValidation/valid_both_sides (0.01s)
+    --- PASS: TestOutgoingReceiptValidation/valid_persistence (0.01s)
+    --- PASS: TestOutgoingReceiptValidation/empty_sender_fallback (0.01s)
+    --- PASS: TestOutgoingReceiptValidation/malformed_empty_user (0.01s)
+    --- PASS: TestOutgoingReceiptValidation/malformed_whitespace_server (0.01s)
+    --- PASS: TestOutgoingReceiptValidation/closed_store (0.01s)
+    --- PASS: TestOutgoingReceiptValidation/sender_missing_server (0.01s)
+    --- PASS: TestOutgoingReceiptValidation/sender_whitespace_user (0.01s)
+    --- PASS: TestOutgoingReceiptValidation/sender_embedded_space (0.01s)
+    --- PASS: TestOutgoingReceiptValidation/sender_embedded_at (0.02s)
+    --- PASS: TestOutgoingReceiptValidation/malformed_chat (0.01s)
+    --- PASS: TestOutgoingReceiptValidation/group_participant (0.01s)
+    --- PASS: TestOutgoingReceiptValidation/group_missing_participant (0.01s)
+    --- PASS: TestOutgoingReceiptValidation/linked_identity (0.01s)
+    --- PASS: TestOutgoingReceiptValidation/phone_device (0.01s)
+=== RUN   TestOutgoingReceiptSyncMarkers
+=== RUN   TestOutgoingReceiptSyncMarkers/blank/idle
+=== RUN   TestOutgoingReceiptSyncMarkers/blank/offline
+=== RUN   TestOutgoingReceiptSyncMarkers/mixed/idle
+=== RUN   TestOutgoingReceiptSyncMarkers/mixed/offline
+=== RUN   TestOutgoingReceiptSyncMarkers/malformed_recipient/idle
+=== RUN   TestOutgoingReceiptSyncMarkers/malformed_recipient/offline
+=== RUN   TestOutgoingReceiptSyncMarkers/sql_failure/idle
+=== RUN   TestOutgoingReceiptSyncMarkers/sql_failure/offline
+=== RUN   TestOutgoingReceiptSyncMarkers/invalid_and_sql_failure/idle
+=== RUN   TestOutgoingReceiptSyncMarkers/invalid_and_sql_failure/offline
+=== RUN   TestOutgoingReceiptSyncMarkers/valid_control/idle
+=== RUN   TestOutgoingReceiptSyncMarkers/valid_control/offline
+--- PASS: TestOutgoingReceiptSyncMarkers (3.20s)
+    --- PASS: TestOutgoingReceiptSyncMarkers/blank/idle (0.28s)
+    --- PASS: TestOutgoingReceiptSyncMarkers/blank/offline (0.27s)
+    --- PASS: TestOutgoingReceiptSyncMarkers/mixed/idle (0.26s)
+    --- PASS: TestOutgoingReceiptSyncMarkers/mixed/offline (0.26s)
+    --- PASS: TestOutgoingReceiptSyncMarkers/malformed_recipient/idle (0.27s)
+    --- PASS: TestOutgoingReceiptSyncMarkers/malformed_recipient/offline (0.27s)
+    --- PASS: TestOutgoingReceiptSyncMarkers/sql_failure/idle (0.26s)
+    --- PASS: TestOutgoingReceiptSyncMarkers/sql_failure/offline (0.26s)
+    --- PASS: TestOutgoingReceiptSyncMarkers/invalid_and_sql_failure/idle (0.27s)
+    --- PASS: TestOutgoingReceiptSyncMarkers/invalid_and_sql_failure/offline (0.27s)
+    --- PASS: TestOutgoingReceiptSyncMarkers/valid_control/idle (0.26s)
+    --- PASS: TestOutgoingReceiptSyncMarkers/valid_control/offline (0.27s)
+=== RUN   TestOfflineCompletionFreshnessRecorded
+=== RUN   TestOfflineCompletionFreshnessRecorded/recorded
+=== RUN   TestOfflineCompletionFreshnessRecorded/invalid_receipt
+=== RUN   TestOfflineCompletionFreshnessRecorded/pending_app_state
+=== RUN   TestOfflineCompletionFreshnessRecorded/disconnected
+=== RUN   TestOfflineCompletionFreshnessRecorded/unauthenticated
+=== RUN   TestOfflineCompletionFreshnessRecorded/cancelled
+=== RUN   TestOfflineCompletionFreshnessRecorded/write_failure
+--- PASS: TestOfflineCompletionFreshnessRecorded (0.08s)
+    --- PASS: TestOfflineCompletionFreshnessRecorded/recorded (0.01s)
+    --- PASS: TestOfflineCompletionFreshnessRecorded/invalid_receipt (0.01s)
+    --- PASS: TestOfflineCompletionFreshnessRecorded/pending_app_state (0.01s)
+    --- PASS: TestOfflineCompletionFreshnessRecorded/disconnected (0.01s)
+    --- PASS: TestOfflineCompletionFreshnessRecorded/unauthenticated (0.01s)
+    --- PASS: TestOfflineCompletionFreshnessRecorded/cancelled (0.01s)
+    --- PASS: TestOfflineCompletionFreshnessRecorded/write_failure (0.01s)
+=== RUN   TestGroupedReceiptMessageIDAliasContract
+=== RUN   TestGroupedReceiptMessageIDAliasContract/legacy_key
+=== RUN   TestGroupedReceiptMessageIDAliasContract/reported_message_id
+=== RUN   TestGroupedReceiptMessageIDAliasContract/legacy_key_precedence
+=== RUN   TestGroupedReceiptMessageIDAliasContract/neither
+=== RUN   TestGroupedReceiptMessageIDAliasContract/explicit_empty_key_not_overridden
+=== RUN   TestGroupedReceiptMessageIDAliasContract/explicit_whitespace_key_not_overridden
+=== RUN   TestGroupedReceiptMessageIDAliasContract/explicit_nonstring_key_not_overridden
+=== RUN   TestGroupedReceiptMessageIDAliasContract/empty_alias
+=== RUN   TestGroupedReceiptMessageIDAliasContract/whitespace_alias
+=== RUN   TestGroupedReceiptMessageIDAliasContract/nonstring_alias
+--- PASS: TestGroupedReceiptMessageIDAliasContract (0.09s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/legacy_key (0.01s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/reported_message_id (0.01s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/legacy_key_precedence (0.01s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/neither (0.01s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/explicit_empty_key_not_overridden (0.01s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/explicit_whitespace_key_not_overridden (0.01s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/explicit_nonstring_key_not_overridden (0.01s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/empty_alias (0.01s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/whitespace_alias (0.01s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/nonstring_alias (0.01s)
+PASS
+ok  	github.com/openclaw/wacli/internal/app	4.069s

@@ -1,0 +1,30 @@
+=== RUN   TestGroupedReceiptMessageIDAliasContract
+=== RUN   TestGroupedReceiptMessageIDAliasContract/legacy_key
+=== RUN   TestGroupedReceiptMessageIDAliasContract/reported_message_id
+    receipt_message_id_alias_test.go:83: emitted IDs=[""] want=["SYNTHETIC_TARGET"]
+    receipt_message_id_alias_test.go:86: failure flag=true valid=true
+    receipt_message_id_alias_test.go:98: fixture message=SYNTHETIC_TARGET delivered=0 want=1
+    receipt_message_id_alias_test.go:107: milestone recorded=false valid=true
+=== RUN   TestGroupedReceiptMessageIDAliasContract/legacy_key_precedence
+=== RUN   TestGroupedReceiptMessageIDAliasContract/neither
+=== RUN   TestGroupedReceiptMessageIDAliasContract/explicit_empty_key_not_overridden
+=== RUN   TestGroupedReceiptMessageIDAliasContract/explicit_whitespace_key_not_overridden
+=== RUN   TestGroupedReceiptMessageIDAliasContract/explicit_nonstring_key_not_overridden
+=== RUN   TestGroupedReceiptMessageIDAliasContract/empty_alias
+=== RUN   TestGroupedReceiptMessageIDAliasContract/whitespace_alias
+    receipt_message_id_alias_test.go:83: emitted IDs=[""] want=[" \t"]
+=== RUN   TestGroupedReceiptMessageIDAliasContract/nonstring_alias
+--- FAIL: TestGroupedReceiptMessageIDAliasContract (0.12s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/legacy_key (0.01s)
+    --- FAIL: TestGroupedReceiptMessageIDAliasContract/reported_message_id (0.01s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/legacy_key_precedence (0.01s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/neither (0.02s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/explicit_empty_key_not_overridden (0.01s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/explicit_whitespace_key_not_overridden (0.01s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/explicit_nonstring_key_not_overridden (0.01s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/empty_alias (0.01s)
+    --- FAIL: TestGroupedReceiptMessageIDAliasContract/whitespace_alias (0.01s)
+    --- PASS: TestGroupedReceiptMessageIDAliasContract/nonstring_alias (0.01s)
+FAIL
+FAIL	github.com/openclaw/wacli/internal/app	0.714s
+FAIL

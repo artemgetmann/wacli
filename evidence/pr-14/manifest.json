@@ -1,0 +1,207 @@
+{
+  "format": 1,
+  "purpose": "sanitized durable PR14 proof, not a new application revision",
+  "tested_source": "11be29bf42e729731de5dbece6824f8456a02a47",
+  "tested_tree": "e5d92bba12338b9ea487bf467a00e57a53dea35d",
+  "baseline_production_source": "19d1d0715c99f236d07dd5b1d9bbad0eb7a70f50",
+  "review_method": "separate read-only Codex agent review; no recorded literal codex review CLI command",
+  "command_gaps": [
+    "Original baseline invocation/environment not captured; minimal command is explicitly reconstructed",
+    "Targeted logs lack command headers; recorded checkpoint command forms are labelled",
+    "SDK logs lack command headers; execution handoff supplies normalized forms",
+    "Original verifier stdout not separately retained; new read-only verification labelled at publication"
+  ],
+  "privacy_omissions": [
+    "private home/toolchain/cache paths",
+    "full suite Output/run events and timestamps",
+    "all live group/account/message identities and phone numbers",
+    "live payloads and payload timestamps",
+    "service PIDs/config/private paths",
+    "raw account logs/configuration/database backups and unsanitized archive",
+    "numeric synthetic JID/phone-like values in subtest names replaced by stable labels even though they are public fixtures"
+  ],
+  "evidence": [
+    {
+      "file": "before/baseline.log",
+      "sha256": "78eab82ef1cecdcf8d38b66dc103eab25c866442c82f9cf3ffc41ef6c8889645",
+      "bytes": 2141,
+      "original_source": "receipt-alias-baseline.log",
+      "transformation": "byte-identical retained artifact; manually reviewed synthetic data only"
+    },
+    {
+      "file": "after/targeted-plain.log",
+      "sha256": "ab36427220a732e3c1dbb50087d382c99990b3ce02b8a1ca80a5b7c4a1fc6cba",
+      "bytes": 7050,
+      "original_source": "receipt-alias-proposal-plain.log",
+      "transformation": "byte-identical retained artifact; manually reviewed synthetic data only"
+    },
+    {
+      "file": "after/targeted-fts.log",
+      "sha256": "54dc414cbd7bfe953f9f95573fa9ab78349b37d25e950fe156aea916ada369a6",
+      "bytes": 7050,
+      "original_source": "receipt-alias-proposal-fts.log",
+      "transformation": "byte-identical retained artifact; manually reviewed synthetic data only"
+    },
+    {
+      "file": "after/targeted-race.log",
+      "sha256": "5b2fe05b096d0394261c41fb9ee5e47f77f7913bc1a52d453d1ba81bb43293bf",
+      "bytes": 1740,
+      "original_source": "receipt-alias-proposal-race.log",
+      "transformation": "byte-identical retained artifact; manually reviewed synthetic data only"
+    },
+    {
+      "file": "after/sdk-race.log",
+      "sha256": "d71a3a87a870f9c83e0f85bfe69a620255cc7a96b997a617a223fafa48a80232",
+      "bytes": 32,
+      "original_source": "receipt-alias-sdk-race.log",
+      "transformation": "byte-identical retained artifact; manually reviewed synthetic data only"
+    },
+    {
+      "file": "review/independent-agent-review.json",
+      "sha256": "32e891f7fa93d690a99d1ad2f8f0dc7356846985e362ff043b6fba000ce71fc2",
+      "bytes": 1237,
+      "original_source": "receipt-alias-independent-review.json",
+      "transformation": "byte-identical retained artifact; manually reviewed synthetic data only"
+    },
+    {
+      "file": "full-gate/results.json",
+      "sha256": "438898caf81c7adb39e68446f54a60a438a4589e5623bffe21b54b19c888510f",
+      "bytes": 3237,
+      "original_source": "fixture-gate-receipt-alias-proposal-11be29bf42e7/results.json",
+      "transformation": "original commands/exits/durations retained; only absolute toolchain directory normalized to <GO_TOOLCHAIN>"
+    },
+    {
+      "file": "full-gate/plain-results.ndjson",
+      "sha256": "bf73d27fc23b08d2d60be3d7cb39f159348eaae29f619dc3724a7781a602b8a8",
+      "bytes": 294628,
+      "original_source": "fixture-gate-receipt-alias-proposal-11be29bf42e7/go.log",
+      "transformation": "complete original pass/fail/skip ledger; fields Action/Package/Test/Elapsed retained; run/output events and execution timestamps omitted to exclude unrelated fixture/machine output; numeric synthetic JIDs in subtest names replaced by stable <SYNTHETIC_JID_N> labels"
+    },
+    {
+      "file": "full-gate/fts-results.ndjson",
+      "sha256": "e3c5d27e0a3a8c9bf478c647ee30bbc647c77820e1e8c33e08e15a084efc559b",
+      "bytes": 298216,
+      "original_source": "fixture-gate-receipt-alias-proposal-11be29bf42e7/fts.log",
+      "transformation": "complete original pass/fail/skip ledger; fields Action/Package/Test/Elapsed retained; run/output events and execution timestamps omitted to exclude unrelated fixture/machine output; numeric synthetic JIDs in subtest names replaced by stable <SYNTHETIC_JID_N> labels"
+    },
+    {
+      "file": "after/sdk-results.ndjson",
+      "sha256": "51c5f6553f81aaddbf00d23cbc02f8bf0cbecb34c74c4573af15f4d7cb29265a",
+      "bytes": 8666,
+      "original_source": "receipt-alias-sdk-suite.log",
+      "transformation": "complete original pass/fail/skip ledger; fields Action/Package/Test/Elapsed retained; run/output events and execution timestamps omitted to exclude unrelated fixture/machine output; numeric synthetic JIDs in subtest names replaced by stable <SYNTHETIC_JID_N> labels"
+    },
+    {
+      "file": "full-gate/format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "original_source": "fixture-gate-receipt-alias-proposal-11be29bf42e7/format.log",
+      "transformation": "byte-identical retained synthetic gate output; empty file means no stdout, with exit in results.json"
+    },
+    {
+      "file": "full-gate/vet.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "original_source": "fixture-gate-receipt-alias-proposal-11be29bf42e7/vet.log",
+      "transformation": "byte-identical retained synthetic gate output; empty file means no stdout, with exit in results.json"
+    },
+    {
+      "file": "full-gate/deadcode.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "original_source": "fixture-gate-receipt-alias-proposal-11be29bf42e7/deadcode.log",
+      "transformation": "byte-identical retained synthetic gate output; empty file means no stdout, with exit in results.json"
+    },
+    {
+      "file": "full-gate/windows.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "original_source": "fixture-gate-receipt-alias-proposal-11be29bf42e7/windows.log",
+      "transformation": "byte-identical retained synthetic gate output; empty file means no stdout, with exit in results.json"
+    },
+    {
+      "file": "full-gate/cgo.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "original_source": "fixture-gate-receipt-alias-proposal-11be29bf42e7/cgo.log",
+      "transformation": "byte-identical retained synthetic gate output; empty file means no stdout, with exit in results.json"
+    },
+    {
+      "file": "full-gate/scripts.log",
+      "sha256": "ca1ed66103b4103cbe47bc1d67f8e436ec106155284c577e88e15b2f3ff5916d",
+      "bytes": 5839,
+      "original_source": "fixture-gate-receipt-alias-proposal-11be29bf42e7/scripts.log",
+      "transformation": "byte-identical retained synthetic gate output; empty file means no stdout, with exit in results.json"
+    },
+    {
+      "file": "full-gate/agent.log",
+      "sha256": "caf51498be1edd44c34d3305582c0a2d60f3ddc08928aef2bc98ca43e05c2a82",
+      "bytes": 5118,
+      "original_source": "fixture-gate-receipt-alias-proposal-11be29bf42e7/agent.log",
+      "transformation": "byte-identical retained synthetic gate output; empty file means no stdout, with exit in results.json"
+    },
+    {
+      "file": "full-gate/build.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "original_source": "fixture-gate-receipt-alias-proposal-11be29bf42e7/build.log",
+      "transformation": "byte-identical retained synthetic gate output; empty file means no stdout, with exit in results.json"
+    },
+    {
+      "file": "full-gate/docs.log",
+      "sha256": "4a4b5791b046db23bd8b8468a3e677962cde819f6f44e70d7eb1b18a88287792",
+      "bytes": 32,
+      "original_source": "fixture-gate-receipt-alias-proposal-11be29bf42e7/docs.log",
+      "transformation": "byte-identical retained synthetic gate output; empty file means no stdout, with exit in results.json"
+    },
+    {
+      "file": "full-gate/diff.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "original_source": "fixture-gate-receipt-alias-proposal-11be29bf42e7/diff.log",
+      "transformation": "byte-identical retained synthetic gate output; empty file means no stdout, with exit in results.json"
+    },
+    {
+      "file": "counts.json",
+      "sha256": "eb6ce4e036cfc17eb60ec668dc2e4df769b10ce8ee81acbd3dbb5d07a062dc5f",
+      "bytes": 1477,
+      "original_source": "original JSON execution logs",
+      "transformation": "mechanically counted named test verdicts; parent/subtest events are counted separately"
+    },
+    {
+      "file": "review/method.md",
+      "sha256": "052483576541405c77f01dd77f39c965eb4d0cca6a3c62c3271428100e3c12fc",
+      "bytes": 1268,
+      "original_source": "receipt-alias-independent-review.json and retained review handback",
+      "transformation": "method clarification; no historical CLI invocation fabricated"
+    },
+    {
+      "file": "commands.md",
+      "sha256": "b58cb37dad8d91adddd05c1a007bfe2e2c90da4047ab1b93362c95c66688ed7d",
+      "bytes": 3463,
+      "original_source": "RECEIPT_ALIAS_PROPOSAL.md, full-gate/results.json and retained execution handoff",
+      "transformation": "command provenance gaps explicitly labelled; private cache/toolchain paths omitted"
+    },
+    {
+      "file": "live/separate-pre-fix-trial.json",
+      "sha256": "17fd7d793ae1032c34d30c47379105ed6eda49e33a90b1443a91cc8377e0c3e2",
+      "bytes": 1699,
+      "original_source": "redacted retained receipt-cause-live-result.json plus the later bounded exact-message receipt-metadata lookup",
+      "transformation": "explicit field allowlist; no private identifiers, payloads, raw receipt data or machine state published; receipt event time reduced to in-window boolean"
+    },
+    {
+      "file": "README.md",
+      "sha256": "b74d5a7551e9a2a1534445d1721e0bd59e468bde1a3ea01c24573a04519435e2",
+      "bytes": 5468,
+      "original_source": "retained execution/review records and public PR references",
+      "transformation": "human-readable evidence index; no private runtime identifiers included"
+    },
+    {
+      "file": "provenance/recheck.log",
+      "sha256": "fc5c1cced132caf899ebccc614ecdada33308ee056e9e993585a39f61702dc45",
+      "bytes": 345,
+      "original_source": "new read-only verifier execution against unchanged tested source",
+      "transformation": "stdout copied exactly; private module directory normalized in command description; new date explicitly labelled"
+    }
+  ]
+}
