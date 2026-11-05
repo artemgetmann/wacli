@@ -45,7 +45,14 @@ func (cli *Client) handleReceipt(ctx context.Context, node *waBinary.Node) {
 
 func (cli *Client) handleGroupedReceipt(partialReceipt events.Receipt, participants *waBinary.Node) (cancelled bool) {
 	pag := participants.AttrGetter()
-	partialReceipt.MessageIDs = []types.MessageID{pag.String("key")}
+	messageID := pag.OptionalString("key")
+	// Observed grouped receipts also use message_id. Only an absent legacy key
+	// enables that alias; keep explicit invalid keys and missing IDs fail-closed
+	// in the consumer. The outer receipt ID is a transport ID, never a fallback.
+	if _, present := participants.Attrs["key"]; !present {
+		messageID = pag.OptionalString("message_id")
+	}
+	partialReceipt.MessageIDs = []types.MessageID{messageID}
 	for _, child := range participants.GetChildren() {
 		if child.Tag != "user" {
 			cli.Log.Warnf("Unexpected node in grouped receipt participants: %s", &child)

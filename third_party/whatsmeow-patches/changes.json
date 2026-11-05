@@ -1,5 +1,5 @@
 {
-  "patch_sha256": "02bb818bdb21f4f7375e95504a837f78c6696cd4ec8e3a14689166a1f3419e8a",
+  "patch_sha256": "34b58e80cc5ce42c14fdcc625ab023c6204710e7e8ee0c5e56340e9d72a3e3a2",
   "files": {
     "appstate.go": {
       "before": "78e3e6f785e50762ba6112c1c626e1ba3b53e7a44d007a5b7fb5cc3c972b1893",
@@ -56,6 +56,10 @@
     "client.go": {
       "before": "4ba6b5f8548f9d0bc6ccc15bbdfecd65c615074538256833706b9bfb590bc9ea",
       "after": "1e350fc7c29bb766423cb5907160af05edc796459fc20c21e56616f9857289ed"
+    },
+    "receipt.go": {
+      "before": "94d63cc93a2c883b13295ba6c897f6bedbd196c925470d762465c4eb816b1534",
+      "after": "87decd8df85c17966ee6f8b8136c7e87852c43733af85f7dc558f8dfe3ac0979"
     },
     "store/appstate_delivery.go": {
       "before": null,
