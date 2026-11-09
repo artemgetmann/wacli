@@ -32,6 +32,36 @@ test("owner matching preserves executable and store whitespace exactly", () => {
   assert.equal(commandLooksLikeExpectedOwner(`${command} --extra`, store, binary), false);
 });
 
+test("stale owner metadata cannot replace a live lock holder or rewrite its evidence", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wacli-stale-owner-"));
+  const pidFile = path.join(dir, "openclaw-sync-owner.json");
+  const logFile = path.join(dir, "openclaw-sync.log");
+  const lockFile = path.join(dir, "LOCK");
+  const evidence = [
+    [pidFile, '{"pid":123,"command":["wacli","sync","--follow","--json"]}\n'],
+    [logFile, '{"agentOwnerRun":"existing-run"}\n'],
+    [lockFile, "pid=456\n"],
+  ];
+  try {
+    for (const [file, contents] of evidence) await fs.writeFile(file, contents);
+    const result = await ensureOwner({command: "ensure", json: true, storeDir: dir,
+      settleMs: 1, graceMs: 1, timeoutMs: 1, tailLines: 40}, {
+      collectStatus: async () => ({ok: true, action: "ensure", storeDir: dir,
+        pidFile, logFile, ownerRunning: false, ownerPid: 123,
+        ownerCommandMatches: false, lockPid: 456, lockPidRunning: true,
+        lockHeldByOwner: false, connected: false, sendReady: false,
+        logTail: [], message: ""}),
+      now: () => 0,
+      sleep: async () => { assert.fail("must reject the ownership conflict immediately"); },
+      startOwner: async () => { assert.fail("must not spawn a competing owner"); },
+      stopOwner: async () => { assert.fail("must not signal the live lock holder"); },
+    });
+    assert.equal(result.ok, false);
+    assert.match(result.message, /live process holds the store lock/);
+    for (const [file, contents] of evidence) assert.equal(await fs.readFile(file, "utf8"), contents);
+  } finally { await fs.rm(dir, {recursive: true, force: true}); }
+});
+
 test("ensure waits for IPC readiness despite a connected owner without restarting", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wacli-ready-"));
   let now = 0;
