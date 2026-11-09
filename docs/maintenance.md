@@ -5,7 +5,12 @@ agent helpers. The repository maintenance owner owns upstream discovery,
 carried-regression review, isolated fixes, draft policy and draft PR evidence.
 A personal assistant may consume structured findings; it does not own these rules.
 No framework runtime, private account state, scheduler or notification store is
-part of this tooling.
+part of this tooling. An operator may keep private maintenance records under
+`.local/maintenance/` in the canonical checkout; that directory is Git-ignored.
+It is not shipped, a WhatsApp store, or a separate ledger for each worktree.
+Keep the configured writer and consumers on the same authoritative file; moving
+it requires a coordinated cutover preserving all existing history. Git does not
+back up ignored operational records.
 
 ## Discovery and authority
 
