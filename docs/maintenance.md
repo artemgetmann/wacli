@@ -1,12 +1,8 @@
-# Repository maintenance and coding owners
+# Repository maintenance owner
 
 This is developer tooling, separate from the shipped Go CLI and account-facing
-agent helpers. The scheduled maintenance owner checks upstream changes, evaluates
-carried regressions and reports evidenced findings. It does not edit source or
-tests, implement fixes, commit, push, create/update PRs or mark PRs ready.
-A distinct coding owner in this repository owns implementation, isolated tests,
-independent review and authorized PR work. An idle sweep after reporting is a
-completed run; implementation progress belongs to the coding owner.
+agent helpers. The repository maintenance owner owns upstream discovery,
+carried-regression review, isolated fixes, draft policy and draft PR evidence.
 A personal assistant may consume structured findings; it does not own these rules.
 No framework runtime, private account state, scheduler or notification store is
 part of this tooling.
@@ -15,9 +11,8 @@ part of this tooling.
 
 Keep a scheduled launcher short: load this maintained document and a separately
 reviewed private installation/authority reference before doing work. The private
-reference owns local paths, separate owner identities, access windows, coding
-publication grants, consumer pins, existing records and unresolved proof owners.
-Never publish it or
+reference owns local paths, owner identity, access windows, publication grants,
+consumer pins, existing records and unresolved proof owners. Never publish it or
 historical runtime prompts. Missing guidance or incompatible dependencies means
 HOLD, not a successful empty scan or permission to use historical defaults.
 
@@ -25,11 +20,6 @@ At each run, obtain trusted actual time and available scheduled-start context;
 obey the private reference's access window before source/private-record reads or
 writes. Never override clocks or invent a scheduled start. Use only the existing
 owner/job; preserve cadence, hour and implicit timezone unless explicitly changed.
-The launcher must explicitly limit the scheduled owner to checking, evaluating
-and reporting. Older prompts or private publication grants cannot give that
-sweep coding authority. Report required implementation to the distinct coding
-owner; do not start another task, delegate coding or create a recurring job from
-the sweep. Missing coding ownership is a reported blocker, not self-assignment.
 Do not access live accounts, send messages or read acknowledgements, change
 binary/service/session/lock/credentials, or run device tests under maintenance
 authority. Preserve separately owned persistence and other proof work; do not
@@ -45,12 +35,12 @@ authorized installed/device gates pass with rollback. Never force a risky live
 race to satisfy review or infer adoption from a merge or CI.
 
 Finish in the existing maintenance chat with coverage, material findings, exact
-source/PR links, owner actions and limits. An external coordinator may follow
-that chat and personally report worthwhile outcomes; a generic attention sweep
-does not drive this job or deliver routine reports. Urgent findings encountered
-there may use its existing route. Do not add a watcher, notification channel,
-direct task-message requirement or test alert. Return the full evidenced result
-here; the reporting coordinator applies its own current policy.
+source/PR links, owner actions and limits. Preserve the existing reporting owner,
+route, materiality, history, deduplication and receipt safeguards in the private
+reference. A file-backed launcher changes where instructions are maintained; it
+does not change implementation authority, reporting policy or delivery proof.
+Do not add a watcher, notification channel, direct task-message requirement or
+test alert. A PR, policy result or worker report is not a user-delivery receipt.
 
 ## Discovery and authority
 
@@ -66,10 +56,8 @@ Give each actionable finding a stable ID, original evidenced creation time,
 source, owner, current disposition, required action and material risk. Keep that
 identity across wording changes, reruns and new draft heads. Retain decision-only,
 ancestry-pending, owner-held, missing-test and unknown-publication findings.
-The sweep may append evidenced findings and changed dispositions to the existing
-authoritative maintenance record within its private scope and budgets; this is
-finding bookkeeping, not permission to edit source. The coding owner records
-actionable dispositions before publication and verified results afterward.
+Record every actionable disposition in the existing authoritative maintenance
+record before publication, then append actual verified publication results.
 Never create a parallel inventory or erase unresolved history.
 
 On every normal maintenance run, reassess the latest retained findings whose
@@ -87,16 +75,8 @@ inventory reconciliation separate from notification-history and delivery gates;
 neither clears the other. Report unavailable evidence explicitly; never invent
 completeness or open a PR merely to clear a HOLD.
 
-## Distinct coding owner and publication
-
-The following implementation and publication procedure is for the distinct
-coding owner, never the scheduled sweep. The sweep may evaluate the pure policy
-and report its result; `create_draft`, `update_existing_draft` or `mark_ready` is
-an eligibility result, not an instruction or grant to perform that operation.
-
-Before publishing, the coding owner inspects the existing inventory AND
-authoritative open/closed fork PRs for stable ID, source issue/PR, branch and
-equivalent intent. Update only
+Before publishing, inspect the existing inventory AND authoritative open/closed
+fork PRs for stable ID, source issue/PR, branch and equivalent intent. Update only
 an owned open draft. Preserve another owner's work. Reconcile closed/merged work
 and unknown publication before retrying; never create a duplicate on uncertainty.
 
@@ -185,9 +165,8 @@ verify actual `draft=false` with that same head afterward. APIs without atomic
 expected-head support still need both reads. If head changed, HOLD handoff and
 do not recommend unreviewed code. Unknown outcomes require read-only
 reconciliation before retry. A policy result is not a remote mutation receipt.
-Only verified ready PRs reach the downstream parent with a ready recommendation;
-drafts, HOLDs and blocked findings still belong in the sweep's evidenced report.
-Merge, installation, release and live acceptance remain separate decisions.
+Only verified ready PRs reach the downstream parent with a recommendation;
+merge, installation, release and live acceptance remain separate decisions.
 
 This source changes no current PR state. Review/install the new artifact/version
 pin and consumer manifest as one pair; absent/incompatible results HOLD. Keep
