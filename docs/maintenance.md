@@ -7,6 +7,41 @@ A personal assistant may consume structured findings; it does not own these rule
 No framework runtime, private account state, scheduler or notification store is
 part of this tooling.
 
+## File-backed scheduled entry
+
+Keep a scheduled launcher short: load this maintained document and a separately
+reviewed private installation/authority reference before doing work. The private
+reference owns local paths, owner identity, access windows, publication grants,
+consumer pins, existing records and unresolved proof owners. Never publish it or
+historical runtime prompts. Missing guidance or incompatible dependencies means
+HOLD, not a successful empty scan or permission to use historical defaults.
+
+At each run, obtain trusted actual time and available scheduled-start context;
+obey the private reference's access window before source/private-record reads or
+writes. Never override clocks or invent a scheduled start. Use only the existing
+owner/job; preserve cadence, hour and implicit timezone unless explicitly changed.
+Do not access live accounts, send messages or read acknowledgements, change
+binary/service/session/lock/credentials, or run device tests under maintenance
+authority. Preserve separately owned persistence and other proof work; do not
+restart closed contribution-review loops or retry uncertain actions.
+
+Assess released replacements against carried regressions: sync ownership and
+PID-bound IPC, paths with spaces, exact content/recipient/quote and uncertain
+send reconciliation, placeholder/replay unread counts, pending markers and exact
+cutoffs including asynchronous echoes, crash/concurrent acknowledgements, media,
+transcription credential boundaries, framework independence and store/settings
+compatibility. Retire patches only after the applicable isolated and separately
+authorized installed/device gates pass with rollback. Never force a risky live
+race to satisfy review or infer adoption from a merge or CI.
+
+Finish in the existing maintenance chat with coverage, material findings, exact
+source/PR links, owner actions and limits. An external coordinator may follow
+that chat and personally report worthwhile outcomes; a generic attention sweep
+does not drive this job or deliver routine reports. Urgent findings encountered
+there may use its existing route. Do not add a watcher, notification channel,
+direct task-message requirement or test alert. Return the full evidenced result
+here; the reporting coordinator applies its own current policy.
+
 ## Discovery and authority
 
 Check relevant upstream releases and open/merged changes against the fork's
@@ -24,6 +59,21 @@ ancestry-pending, owner-held, missing-test and unknown-publication findings.
 Record every actionable disposition in the existing authoritative maintenance
 record before publication, then append actual verified publication results.
 Never create a parallel inventory or erase unresolved history.
+
+On every normal maintenance run, reassess the latest retained findings whose
+draft-policy reason is `deduplication_inventory_incomplete`, even when no new
+publication is proposed. Use fresh authoritative open/closed fork PR evidence;
+complete relevant pagination and match stable ID, source issue/PR, branch and
+equivalent intent before asserting inventory completeness. A successful list
+query alone is insufficient. Reconcile historical reasons against current
+source and owner evidence: completed milestones need no replacement PR, merged
+work does not prove installed acceptance, and another owner's unresolved work
+stays with that owner. Rerun the reviewed policy with evidenced inputs and append
+only changed dispositions or material evidence within existing record/byte
+budgets, preserving identity, creation time and publication uncertainty. Keep PR
+inventory reconciliation separate from notification-history and delivery gates;
+neither clears the other. Report unavailable evidence explicitly; never invent
+completeness or open a PR merely to clear a HOLD.
 
 Before publishing, inspect the existing inventory AND authoritative open/closed
 fork PRs for stable ID, source issue/PR, branch and equivalent intent. Update only
