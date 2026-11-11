@@ -12,14 +12,25 @@ explicit checkout, never the process working directory. The private authority
 binds the actual owner, repository, canonical ledger, reviewed policy/consumer
 pair and relay. Missing files, incompatible pins or unresolved configuration
 mean HOLD; do not discover substitute owners or replay historical prompts.
+If required configuration is unavailable, stop before discovery or publication
+and retain the full HOLD result in the existing chat, naming the missing proof
+and actions not attempted. Relay it only if the authorized destination can be
+verified independently; otherwise record `relay unavailable` locally without
+guessing a route, initializing a ledger or creating another store.
 Private paths, account settings, routing IDs and acceptance receipts stay private.
 
 ## One run
 
 1. Establish trusted actual time, source chat/run identity and trigger evidence.
    A manual or Run now invocation is manual evidence, never proof of an unattended
-   scheduled run. For a scheduled occurrence, respect its evidenced start; unknown
-   context stays unknown. Reconcile active, pending or uncertain prior work before
+   scheduled run. Inspect the actual native invocation fields and current request:
+   a heartbeat envelope or dispatch timestamp alone proves neither scheduled
+   origin nor scheduled start. For a scheduled occurrence, respect its evidenced
+   start. If the origin/start needed to authorize work cannot be established,
+   HOLD discovery and publication and report the missing evidence; do not relabel
+   it manual or invent a start. An explicitly authorized manual invocation may
+   proceed within that scope, labelled manual. Reconcile active, pending or
+   uncertain prior work before
    starting: observe the same occurrence rather than overlap or redispatch it.
    Maintenance has no inherited daily-sweep hour gate. Apply only restrictions
    explicitly assigned to maintenance by the private authority.
@@ -47,8 +58,14 @@ Private paths, account settings, routing IDs and acceptance receipts stay privat
 5. Where existing authority allows, implement a worthwhile small concrete missing
    fix in an isolated checkout. Establish baseline/candidate behavior and the
    exact-head required repository gate. Reconcile authoritative open/closed PRs
-   and overlapping owners immediately before publication. Create a focused draft
-   only in the authorized fork, or update an owned matching open draft. Include
+   and overlapping owners immediately before publication. After implementation
+   and testing, rerun policy and `prepare` with the current exact tested head,
+   fresh inventory, actual test evidence, risks and rollout. A pre-implementation
+   HOLD or earlier policy result cannot authorize publication. Persist any changed
+   validated disposition and verify the current recorded disposition before
+   publishing; unchanged blocks need no duplicate append. Missing or uncertain
+   proof HOLDs publication. Create a focused draft only in the authorized fork,
+   or update an owned matching open draft. Include
    stable ID, source links, before/after, base/head SHAs, commands/results, risks,
    carried-patch impact, rollout/rollback and unresolved acceptance. Reconcile
    closed/merged work and unknown publication before retry; never duplicate it.
@@ -62,8 +79,11 @@ Private paths, account settings, routing IDs and acceptance receipts stay privat
    retained HOLDs, exact source/PR links, changes, owner actions and blockers.
    After every completed run, including quiet, blocked or failed results, send
    that full result once using the private authority's existing relay and supported
-   task-message tool. Record the actual submission outcome. A blocked or uncertain
-   attempt stays unresolved; reconcile that same attempt before retrying. Never
+   task-message tool. Record the actual submission outcome. Missing or unverified
+   destination/configuration means keep the full result in this chat as HOLD
+   with `relay unavailable`; do not send until the authorized binding is verified.
+   A blocked or uncertain attempt stays unresolved; reconcile that same attempt
+   before retrying. Never
    switch routes to evade denial. Duplicate results are reconciled, not resent.
    Relay submission does not prove parent wake, user notification or device
    appearance. The parent applies materiality, history and actual notification
