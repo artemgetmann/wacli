@@ -44,7 +44,11 @@ Under the current private authority, a concrete small missing fix may be
 implemented in isolation and proposed as a focused fork DRAFT PR. Include the
 source finding, before/after, exact base/tested head, applicable baseline/candidate
 checks, risks and rollout/rollback. Follow AGENTS, obtain independent review and
-verify actual remote repository, PR URL, head and draft state after publication.
+immediately before creating/updating a draft refresh the PR inventory and owner
+evidence, then reconcile the candidate head with the exact tested/reviewed head.
+A changed head, new overlap or unavailable evidence means HOLD and renewed checks.
+Do not publish using the earlier discovery inventory. After publication,
+verify actual remote repository, PR URL, head and draft state.
 Missing tests, unresolved ownership or decision-only findings stay visible as
 HOLDs; a maintenance run need not produce a PR. No permanent coding-chat handoff
 is required. Ready promotion, merge, release, installation and live acceptance
@@ -71,7 +75,14 @@ Keep current entries compact and link to detailed evidence/history only when
 needed. Preserve prior records as readable history rather than repeatedly copying
 them into the active register. There is no lifetime event/byte cap: more than 64
 historical updates must not drop a finding or block maintenance. Reconcile any
-concurrent edits before replacing an entry; an active/uncertain owner retains it.
+active/uncertain owner before writing. All register writers must hold an exclusive
+OS lock on the stable `<register>.lock` sibling (never replace that lock file).
+Under that lock, compare the register's bytes
+or digest with the version read; a mismatch means HOLD and reconciliation. Confirm
+the prior material state is saved to history, stage the replacement in the same
+directory, recheck the original and replace by atomic rename, then verify the
+result. If locking, history preservation or write outcome is uncertain, HOLD and
+read back both files before any retry; never overwrite an intervening edit.
 
 Finish every run with its identity, actual timing/trigger evidence, checked
 sources, coverage, findings or quiet result, changed files/PRs, owner actions and
