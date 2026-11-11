@@ -1,140 +1,84 @@
-# Repository maintenance owner
+# Repository maintenance
 
-This is developer tooling, separate from the shipped Go CLI and account-facing
-agent helpers. The repository maintenance owner owns upstream discovery,
-carried-regression review, isolated fixes, draft policy and draft PR evidence.
-A personal assistant may consume structured findings; it does not own these rules.
-No framework runtime, private account state, scheduler or notification store is
-part of this tooling.
+The existing native task checks upstream changes against the fork's carried
+fixes, makes worthwhile small tested improvements, and sends one full result to
+the existing relay. Its short prompt reads this file and a private local authority
+reference directly. Use normal `AGENTS.md` for repository work and required gates.
+No additional scheduler, coordinator, collector or coding chat per finding.
 
-## Discovery and authority
+## Start
 
-Check relevant upstream releases and open/merged changes against the fork's
-actual capabilities and carried regressions. Record bounded coverage, exact
-source URLs/SHAs, release provenance and unexamined areas. Release-note silence
-is not proof of repair. Distinguish merged source, installed binary, live adopted
-code and accepted behavior. Connectivity or source tests alone do not prove live
-acceptance. Do not access accounts, change services or run live tests merely to
-perform maintenance discovery.
+Read the private reference for the actual source checkout, owner, upstream scope,
+current findings, history and relay. Resolve repository-relative paths against
+that checkout, regardless of the task's working directory. Missing required
+bindings or unreadable history means HOLD with a full local explanation; never
+invent a clean baseline, initialize replacement history or guess a destination.
+Reconcile active, interrupted or uncertain prior runs before starting another.
 
-Give each actionable finding a stable ID, original evidenced creation time,
-source, owner, current disposition, required action and material risk. Keep that
-identity across wording changes, reruns and new draft heads. Retain decision-only,
-ancestry-pending, owner-held, missing-test and unknown-publication findings.
-Record every actionable disposition in the existing authoritative maintenance
-record before publication, then append actual verified publication results.
-Never create a parallel inventory or erase unresolved history.
+Use the same instructions and authority for manual and scheduled invocations.
+Record actual start/end, run identity and trigger evidence. Optional origin or
+scheduled-start metadata may be unknown; absence creates no new access window.
+Respect a real supplied scheduled start, never invent one or infer unattended
+acceptance from a heartbeat timestamp. No inherited daily-sweep hour restriction.
 
-Before publishing, inspect the existing inventory AND authoritative open/closed
-fork PRs for stable ID, source issue/PR, branch and equivalent intent. Update only
-an owned open draft. Preserve another owner's work. Reconcile closed/merged work
-and unknown publication before retrying; never create a duplicate on uncertainty.
+## Check and decide
 
-A focused draft requires a concrete bounded change missing from the fork,
-no overlapping owner, isolated baseline/candidate evidence where meaningful,
-an exact tested head, tests, risks and rollout/rollback notes. Follow AGENTS.md
-and applicable repository skills. Include stable ID, upstream links, before/after,
-base/head SHAs, commands/results, carried-patch impact and unresolved acceptance.
-Privacy-safe evidence only. Verify actual remote URL, repository, base/head and
-draft state after publication. The decision function grants no authority: actual
-publication still requires the current operator's authorization. No automatic
-approval, merge, release, deployment or upstream publication. Keep work in draft
-while implementation, applicable tests or independent review is incomplete; a
-ready transition requires the separate exact-head promotion gate below.
+Read the latest findings and carried-fix list, following specific history links
+only when relevant. Check relevant upstream releases and open/merged changes,
+then authoritative open/closed fork PRs. Record actual coverage, source URLs/SHAs,
+what remains unchecked and each material finding's action, owner and risk.
+Release-note silence is not proof of repair. Source merged, installed code and
+accepted live behavior remain distinct. Retiring a carried fix requires its
+regression evidence and any separately authorized installed/device acceptance.
 
-## Portable policy contract v1
+Match stable source ID, source issue/PR, branch and equivalent intent before
+proposing work. Keep original identity/creation time through wording or head
+changes. Reconcile closed/merged outcomes, another owner's work and uncertain
+publication instead of opening duplicates. Revisit unresolved findings when new
+evidence could change them, including prior incomplete-inventory HOLDs. Do not
+restart settled review loops or create placeholder PRs merely to clear a HOLD.
 
-Run `node scripts/maintenance-policy.mjs` with one JSON review on stdin. It reads
-no files except its own source for the artifact digest; it performs no network,
-publication, account, service or state mutation. Node >=24 is the existing repo
-requirement. The public `draftDecision(review)` is pure; `report(review)` adds
-version and producer identity. Invalid/budget-exceeded review input exits 2.
+Where existing authority permits, implement a small concrete missing fix in an
+isolated checkout. Establish baseline/candidate behavior and follow AGENTS gates.
+Immediately before publication, refresh inventory, ownership and exact tested-head
+evidence; record the current disposition first. Update only an owned matching
+open draft, otherwise create one focused authorized-fork draft. Include source
+links, before/after, exact base/head, tests, risks and rollout/rollback. Verify
+actual remote repository, URL, head and draft state; record verified or uncertain
+outcome afterward. A decision is not a mutation receipt. Keep incomplete work in
+draft. Readiness needs completed applicable tests and independent review of that
+same head; no automatic approval, merge, install, release or deployment.
 
-Required review fields: `finding_id`, `repository`, `publication_outcome`
-(`not_attempted`, `verified`, or an uncertainty value which HOLDs),
-`pr_inventory_complete`, `existing_prs` (at most 64 objects), `concrete_change`,
-`missing_from_fork`, `isolated_tests_passed`, `tested_head` (40 lowercase hex),
-`test_evidence` (nonempty string array), `risks`, `rollout`.
-Optional blockers: `overlapping_owner`, `decision_only`, `ancestry_pending`.
-Matching PR evidence contains repository, finding_id or equivalent_intent=true,
-URL, remote_verified, state, draft and owned. Proof flags must be true where
-required. Evidence assertions must come from actual checks, not inferred defaults.
+## Record and report
 
-Output: `contract_version=1`, `policy_version=1.1.0`, `producer_sha256`,
-`finding_id`, `decision` (`hold`, `create_draft`, `update_existing_draft`) and
-`reason`. A digest identifies source bytes; it does not authenticate assertions,
-prove remote evidence freshness, authorize publication or acknowledge an alert.
-Consumers pin the reviewed contract/version/artifact. Missing or incompatible
-reports must HOLD, never fall back to another policy implementation.
+Maintain one current entry per real finding, with stable identity, original time,
+current facts, owner, disposition, source/evidence links and unresolved outcomes.
+Record before/after side-effect attempts in the current run report, including
+actual PR and relay receipts. Retain full original history and previous material
+versions through explicit history/run links. Quiet or unchanged scans add no
+finding; record their coverage in the run report. Do not append every update to
+a lifetime-capped intake ledger or require collector-era schemas, policy pins,
+`prepare` or `collect` for this procedure.
 
-Consumers retain their own neutral finding-to-alert mapping. The producer must
-not import assistant helpers or include private ledger paths, personal routing,
-daily memory, privacy windows or notification/history receipts. PR deduplication
-belongs here; personal alert deduplication stays with its consumer.
+Use the existing task as the single writer. Before replacing current findings,
+verify the previously read file is unchanged, preserve prior material versions,
+then replace atomically; a race or uncertain write means HOLD and reconciliation,
+not overwrite or blind retry. Many historical updates must not evict identities,
+reset original facts, close unresolved work or erase uncertain attempts. Older
+receipts stay reachable; relay submission never proves parent/user delivery.
 
-## Separate readiness-promotion operation (policy 1.1.0)
+Finish every run, including quiet, blocked and failed runs, with a full result:
+identity/trigger/time, coverage, findings/HOLDs, changes, source/PR links, actions
+and limits. Send that full result once to the private reference's existing relay.
+If the binding is missing, retain a local HOLD. Record intent before submission
+and its actual outcome afterward; reconcile unknown or blocked attempts before
+retrying. Do not resend duplicates or invent receipts. The receiving assistant
+selects useful user updates using materiality and actual notification history;
+quiet maintenance still relays its full result without routine user alerts.
 
-Legacy draft requests and decisions are unchanged. For promotion pass
-`{"operation":"promotion","review":{...}}` on stdin. The public pure
-`promotionDecision(review)` returns decision/reason; `promotionReport(review)`
-adds artifact/version, stable finding ID, PR URL and reviewed head. Output uses
-`promotion_decision=mark_ready|hold|already_ready` and `operation=promotion`;
-it has no legacy `decision` and must not enter the draft `policy_result` input.
-`publication_performed=false` is explicit. Unknown operations/malformed inputs
-fail closed. The bounded stdin limit is unchanged.
-
-Keep all existing draft evidence and inventory fields. Promotion additionally
-requires a single verified matching open/owned PR with boolean `draft` and exact
-`head_sha`; `pr_inventory_complete` and `remote_verified` must be booleans true.
-Closed, overlapping, missing, multiple or unowned PRs HOLD. Equivalent intent
-deduplication remains active. Unknown publication HOLDs until authoritative
-remote reconciliation, including after an uncertain ready attempt.
-
-Supply actual timezone-aware ISO `decision_at` and `pr_inventory_observed_at`
-and nonempty `remote_inventory_evidence` references. Inventory must not be
-future-dated or over five minutes old. The caller supplies trusted actual time;
-this pure report authenticates neither clocks nor assertions. Preserve original
-finding creation time separately. Also require:
-
-- `owner_overlap_checked=true`, with no overlapping owner;
-- `implementation_complete=true`, `applicable_tests_passed=true`, and the existing
-  test evidence, exact tested head, risks and rollout. Applicable tests include
-  the repository mandatory gate and required CI;
-- `independent_review_passed=true`, nonempty `independent_review_evidence`, and
-  `independent_review_head` equal to tested head and current remote head;
-- distinct nonempty `implementation_owner` and `independent_reviewer`. The caller
-  must verify independence, not invent different labels;
-- explicit `unresolved_findings=[]`: no blocking material/actionable findings.
-  Accepted limitations and nonblocking commentary are not blocking findings.
-
-These conditions also apply to `already_ready`, which reports verified state
-without another transition. Missing proof never defaults to completion. Only
-under current publication authority may the owner call supported ready controls
-once the gate passes. Recheck remote PR/head immediately before the call and
-verify actual `draft=false` with that same head afterward. APIs without atomic
-expected-head support still need both reads. If head changed, HOLD handoff and
-do not recommend unreviewed code. Unknown outcomes require read-only
-reconciliation before retry. A policy result is not a remote mutation receipt.
-Only verified ready PRs reach the downstream parent with a recommendation;
-merge, installation, release and live acceptance remain separate decisions.
-
-This source changes no current PR state. Review/install the new artifact/version
-pin and consumer manifest as one pair; absent/incompatible results HOLD. Keep
-existing assistant ledger decisions/collector unchanged: promotion proof stays
-in source evidence, while only draft reports enter its prepare mapping. No
-personal routing, notification state, framework imports or new stores live here.
-
-## Verification and change management
-
-`node --test scripts/maintenance-policy.test.mjs` runs portable policy cases and
-the public CLI. These tests are automatically included by existing
-`test:docs` (`scripts/*.test.mjs`), hence the normal full gate. Golden cases were
-captured from the prior policy before extraction; they contain synthetic evidence.
-No test fixture proves live delivery or publication.
-
-Publish/install a policy change only after review. Consumers must explicitly
-review and update their pinned artifact digest and supported version. Deploy the
-producer before switching the consumer; unavailable/mismatched dependencies HOLD.
-Keep the previous reviewed producer/consumer pair for rollback. Existing findings,
-original creation times and pending publication outcomes must survive migration.
-This source addition itself changes no running owner, automation or deployment.
+Maintenance does not authorize accounts, ordinary correspondence, read receipts,
+service/binary/session/credential changes or live/device/recovery tests. Preserve
+any original narrowly scoped exception explicitly in the private reference.
+Legacy policy/adapter/collector artifacts remain available for rollback until
+all owners and consumers are reconciled; this source change does not install or
+retire them. Cutover and real native/relay acceptance require separate authority.
