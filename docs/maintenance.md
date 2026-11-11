@@ -21,17 +21,18 @@ Private paths, account settings, routing IDs and acceptance receipts stay privat
 
 ## One run
 
-1. Establish trusted actual time, source chat/run identity and trigger evidence.
-   A manual or Run now invocation is manual evidence, never proof of an unattended
-   scheduled run. Inspect the actual native invocation fields and current request:
-   a heartbeat envelope or dispatch timestamp alone proves neither scheduled
-   origin nor scheduled start. For a scheduled occurrence, respect its evidenced
-   start. If the origin/start needed to authorize work cannot be established,
-   HOLD discovery and publication and report the missing evidence; do not relabel
-   it manual or invent a start. An explicitly authorized manual invocation may
-   proceed within that scope, labelled manual. Reconcile active, pending or
-   uncertain prior work before
-   starting: observe the same occurrence rather than overlap or redispatch it.
+1. Establish trusted actual time, source chat/run identity and the existing
+   native task's authority. Record actual trigger evidence when supplied: an
+   explicit manual/Run now request is manual; unattended scheduled origin needs
+   actual evidence. A heartbeat envelope or dispatch timestamp alone does not
+   distinguish them. Otherwise report origin/start as unknown, without inventing
+   a scheduled start or claiming scheduled acceptance. Missing optional trigger
+   metadata alone is not a new access gate for an authorized native invocation.
+   If an actual scheduled start is supplied, do not begin before it. Missing
+   task authority still means HOLD. Reconcile active, pending or uncertain prior
+   work before starting: observe the same occurrence rather than overlap or
+   redispatch it. Manual and scheduled invocations use these same instructions,
+   authority, scope, safeguards and result route.
    Maintenance has no inherited daily-sweep hour gate. Apply only restrictions
    explicitly assigned to maintenance by the private authority.
 2. Read `AGENTS.md`, `VISION.md`, `docs/architecture/overview.md`, this runbook and
