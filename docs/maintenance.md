@@ -11,17 +11,45 @@ part of this tooling.
 
 Keep a scheduled launcher short: load this maintained document and a separately
 reviewed private installation/authority reference before doing work. The private
-reference owns local paths, owner identity, access windows, publication grants,
-consumer pins, existing records and unresolved proof owners. Never publish it or
+reference owns local paths, owner identity, maintenance-specific access restrictions,
+publication grants, consumer pins, existing records, result destination and
+unresolved proof owners. Never publish it or
 historical runtime prompts. Missing guidance or incompatible dependencies means
 HOLD, not a successful empty scan or permission to use historical defaults.
 
+The existing seven-day task needs only this launcher, with both placeholders
+resolved to reviewed absolute paths during installation:
+
+> Read and follow `<repository>/docs/maintenance.md` and
+> `<private-installation>/authority.md`. Complete the existing maintenance run
+> under that authority and return its full result through its configured route.
+> If guidance or configuration is unavailable, report HOLD here. If a result
+> submission is blocked or uncertain, report it here and do not retry blindly.
+
+These are installation placeholders, not fallback paths. A fresh context must
+resolve both files and the current owner before discovery. Do not embed a copy of
+this policy or the historical prompt in the task. Keep the reviewed private
+reference outside this repository; it must identify the existing task and owner,
+canonical checkout and records, reviewed producer/consumer pair, publication
+authority, permitted sources, result destination and unresolved proof owners.
+An absent, stale or ambiguous binding is HOLD. Do not replace it with a new chat,
+task, configuration store or assumed default.
+
 At each run, obtain trusted actual time and available scheduled-start context;
-obey the private reference's access window before source/private-record reads or
-writes. Never override clocks or invent a scheduled start. Use only the existing
-owner/job; preserve cadence, hour and implicit timezone unless explicitly changed.
-Do not access live accounts, send messages or read acknowledgements, change
-binary/service/session/lock/credentials, or run device tests under maintenance
+obey any access restrictions explicitly assigned to maintenance in the private
+reference before source/private-record reads or writes. Do not import the daily
+sweep's hours into repository maintenance. Never override clocks or invent a
+scheduled start. A scheduled run must not start early; an explicit manual run is
+not proof of an unattended scheduled occurrence. Missing or unverifiable scheduled
+start evidence on a scheduled trigger means HOLD before discovery; an explicit
+manual invocation does not require scheduled-start evidence. Use only the existing owner/job;
+preserve its seven-day cadence, hour, anchor and implicit timezone unless
+explicitly changed. Reconcile active, pending and uncertain turns for the same
+occurrence before starting work. Observe the existing turn instead of dispatching
+an overlapping run; unavailable owner status is HOLD.
+
+Do not access live accounts, send account/third-party messages or read
+acknowledgements, change binary/service/session/lock/credentials, or run device tests under maintenance
 authority. Preserve separately owned persistence and other proof work; do not
 restart closed contribution-review loops or retry uncertain actions.
 
@@ -34,13 +62,61 @@ compatibility. Retire patches only after the applicable isolated and separately
 authorized installed/device gates pass with rollback. Never force a risky live
 race to satisfy review or infer adoption from a merge or CI.
 
-Finish in the existing maintenance chat with coverage, material findings, exact
-source/PR links, owner actions and limits. Preserve the existing reporting owner,
+Finish in the existing maintenance chat with the source chat/run identity,
+trigger evidence, actual start/end, checked sources and coverage, material findings,
+exact source/PR links, changes, owner actions and limits. Distinguish a bounded
+quiet scan from unavailable evidence or incomplete work. For every completed run,
+including quiet, HOLD and failed runs, submit that full result once to the
+existing result destination explicitly authorized in the private reference.
+Report a missing or ambiguous destination here without guessing a target. Record
+the actual submission outcome; blocked or uncertain submission stays unresolved
+until the same attempt is reconciled. Do not redispatch maintenance or blindly
+resend its result to obtain a receipt.
+
+Preserve the existing reporting owner,
 route, materiality, history, deduplication and receipt safeguards in the private
 reference. A file-backed launcher changes where instructions are maintained; it
 does not change implementation authority, reporting policy or delivery proof.
-Do not add a watcher, notification channel, direct task-message requirement or
-test alert. A PR, policy result or worker report is not a user-delivery receipt.
+Use only the result route explicitly authorized in the private reference. Do not
+create an additional watcher, channel or test alert. Full-result submission does
+not prove parent wake, user notification or device appearance. The reporting owner
+still selects useful user updates using existing materiality/history checks and
+notification intent/receipt safeguards. A quiet run still returns its full result;
+it does not require a routine user alert. A PR, policy result or worker report is
+not a user-delivery receipt. Missing history is HOLD, never a clean baseline.
+
+The existing maintenance owner may implement a bounded, concrete missing fix in
+isolation and prepare its focused draft under the publication gates below. This
+cleanup adds no permanent separate-coding-chat requirement for future findings.
+It does not transfer independently owned implementation or proof work.
+
+Use the existing canonical ledger and reviewed consumer's `prepare` interface
+with `{item, policy_result}` for every actionable changed disposition, including
+decision-only, overlap, missing-proof and unknown-publication HOLDs. Bind the same
+stable finding ID and original creation time; record disposition before publication
+and verified outcome afterward. Preserve concurrent/historical bytes, reconciliation
+markers and the existing 64-record/262144-byte budgets. Do not append unchanged
+scans or synthetic findings. Maintenance does not invoke the sweep collector to
+complete its result relay; that collector retains its separately owned timing gate.
+Keep notification history and receipts separate from PR inventory and ledger intake.
+
+### Reviewing and installing the entry
+
+Test the candidate in isolation before changing the existing task. Check useful,
+quiet and HOLD results, missing guidance/configuration, active or uncertain owner
+turns, blocked/uncertain relay, unchanged and materially changed findings, missing
+history, and resolution from a fresh context using only the launcher and its two
+files. Use synthetic records and a simulated result destination; never write test
+findings or receipts to production records. Existing policy/consumer tests prove
+their own contracts, not natural-language execution or end-to-end delivery.
+
+Installation is a separate authorized action: resolve durable file paths, verify
+the reviewed producer/consumer pins and private bindings, then update only the
+existing task's prompt. Read back the same task/owner, seven-day cadence, raw hour,
+anchor and implicit timezone. Retain the prior prompt and reviewed pair for
+rollback without creating another scheduler or state store. Verify the exact run
+and each actual handoff separately. A manual invocation, source test, task-message
+acceptance or draft PR alone does not establish unattended scheduled delivery.
 
 ## Discovery and authority
 
