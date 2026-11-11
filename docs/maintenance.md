@@ -3,7 +3,7 @@
 The existing maintenance task checks upstream changes against this fork's carried
 fixes, keeps useful history and proposes worthwhile small draft PRs. It is
 repository work, separate from the shipped CLI and account-facing workflows.
-Follow [AGENTS.md](../AGENTS.md) for implementation, tests and PR requirements.
+Follow `AGENTS.md` for implementation, tests and PR requirements.
 
 ## Entry and ownership
 
@@ -88,7 +88,7 @@ unresolved; do not invent a clean baseline or notify unchanged findings blindly.
 
 ## Compatibility and cutover
 
-The existing [draft/promotion policy](../scripts/maintenance-policy.mjs) and its
+The existing `scripts/maintenance-policy.mjs` draft/promotion policy and its
 regression tests remain available for legacy callers. The routine flow above
 requires neither their version/digest pins nor the downstream prepare/collect
 adapter, collector schema, daily-memory helper or old ledger limits. This change
