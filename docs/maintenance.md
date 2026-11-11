@@ -1,96 +1,99 @@
-# Repository maintenance owner
+# Repository maintenance
 
-This is developer tooling, separate from the shipped Go CLI and account-facing
-agent helpers. The repository maintenance owner owns upstream discovery,
-carried-regression review, isolated fixes, draft policy and draft PR evidence.
-A personal assistant may consume structured findings; it does not own these rules.
-No framework runtime, private account state, scheduler or notification store is
-part of this tooling.
+The existing native seven-day task is the maintenance owner. It reads this
+runbook and its private authority, performs bounded repository work, and sends
+its full result once to the existing relay, which wakes the coordinating dot.
+Keep its existing cadence, owner and route. No additional scheduler, coordinator,
+state store or separate coding chat is required.
 
-## File-backed scheduled entry
+The launcher must name absolute paths to this file, repository `AGENTS.md` and
+the private authority. Resolve repository-relative paths below against that
+explicit checkout, never the process working directory. The private authority
+binds the actual owner, repository, canonical ledger, reviewed policy/consumer
+pair and relay. Missing files, incompatible pins or unresolved configuration
+mean HOLD; do not discover substitute owners or replay historical prompts.
+Private paths, account settings, routing IDs and acceptance receipts stay private.
 
-Keep a scheduled launcher short: load this maintained document and a separately
-reviewed private installation/authority reference before doing work. The private
-reference owns local paths, owner identity, access windows, publication grants,
-consumer pins, existing records and unresolved proof owners. Never publish it or
-historical runtime prompts. Missing guidance or incompatible dependencies means
-HOLD, not a successful empty scan or permission to use historical defaults.
+## One run
 
-At each run, obtain trusted actual time and available scheduled-start context;
-obey the private reference's access window before source/private-record reads or
-writes. Never override clocks or invent a scheduled start. Use only the existing
-owner/job; preserve cadence, hour and implicit timezone unless explicitly changed.
-Do not access live accounts, send messages or read acknowledgements, change
-binary/service/session/lock/credentials, or run device tests under maintenance
-authority. Preserve separately owned persistence and other proof work; do not
-restart closed contribution-review loops or retry uncertain actions.
+1. Establish trusted actual time, source chat/run identity and trigger evidence.
+   A manual or Run now invocation is manual evidence, never proof of an unattended
+   scheduled run. For a scheduled occurrence, respect its evidenced start; unknown
+   context stays unknown. Reconcile active, pending or uncertain prior work before
+   starting: observe the same occurrence rather than overlap or redispatch it.
+   Maintenance has no inherited daily-sweep hour gate. Apply only restrictions
+   explicitly assigned to maintenance by the private authority.
+2. Read `AGENTS.md`, `VISION.md`, `docs/architecture/overview.md`, this runbook and
+   the private authority. Verify the configured policy/consumer versions and
+   digests before use. Read the existing canonical ledger within its 64-record /
+   262144-byte limits. Preserve initialization/reconciliation markers, stable
+   source IDs, original evidenced creation times, owners, unresolved HOLDs and
+   uncertain outcomes. Missing or invalid history is unavailable, not empty.
+3. Check upstream releases and relevant open/merged changes against actual fork
+   capabilities and carried regressions. Record exact URLs/SHAs, release
+   provenance, bounded coverage and unexamined areas. Reassess retained
+   `deduplication_inventory_incomplete` HOLDs on every normal run, even without
+   new publication: reconcile complete relevant open/closed fork PR evidence by
+   stable ID, source, branch and equivalent intent. Do not fabricate completeness,
+   reopen settled milestones or compete with another owner's unresolved work.
+4. For each actionable finding, including decision-only, ancestry, owner-overlap,
+   missing-proof and unknown-publication HOLDs, run the policy below with actual
+   bounded evidence. Pass its exact draft report and the same stable finding ID
+   to the existing private consumer's `prepare` operation as `{item,policy_result}`.
+   Append its validated block to the same canonical ledger only for new/material
+   evidence or changed dispositions, before publication. Preserve concurrent and
+   historical bytes and all budgets; uncertain persistence HOLDs publication.
+   Never invoke the sweep collector for this handoff or append synthetic findings.
+5. Where existing authority allows, implement a worthwhile small concrete missing
+   fix in an isolated checkout. Establish baseline/candidate behavior and the
+   exact-head required repository gate. Reconcile authoritative open/closed PRs
+   and overlapping owners immediately before publication. Create a focused draft
+   only in the authorized fork, or update an owned matching open draft. Include
+   stable ID, source links, before/after, base/head SHAs, commands/results, risks,
+   carried-patch impact, rollout/rollback and unresolved acceptance. Reconcile
+   closed/merged work and unknown publication before retry; never duplicate it.
+   Verify remote URL, repository, base/head and draft state afterward, then append
+   the actual outcome through policy plus `prepare`. A policy decision grants no
+   authority. Incomplete implementation, tests or independent review stays draft;
+   readiness uses the separate promotion gate below. No automatic approval,
+   merge, install, release, deployment or upstream publication.
+6. Finish in the existing chat with the full evidenced result: source chat/run,
+   actual trigger, start/end, checked sources and coverage, findings including
+   retained HOLDs, exact source/PR links, changes, owner actions and blockers.
+   After every completed run, including quiet, blocked or failed results, send
+   that full result once using the private authority's existing relay and supported
+   task-message tool. Record the actual submission outcome. A blocked or uncertain
+   attempt stays unresolved; reconcile that same attempt before retrying. Never
+   switch routes to evade denial. Duplicate results are reconciled, not resent.
+   Relay submission does not prove parent wake, user notification or device
+   appearance. The parent applies materiality, history and actual notification
+   receipts; quiet runs still reach the relay without routine user alerts.
 
-Assess released replacements against carried regressions: sync ownership and
-PID-bound IPC, paths with spaces, exact content/recipient/quote and uncertain
-send reconciliation, placeholder/replay unread counts, pending markers and exact
-cutoffs including asynchronous echoes, crash/concurrent acknowledgements, media,
-transcription credential boundaries, framework independence and store/settings
-compatibility. Retire patches only after the applicable isolated and separately
-authorized installed/device gates pass with rollback. Never force a risky live
-race to satisfy review or infer adoption from a merge or CI.
+## Scope and proof
 
-Finish in the existing maintenance chat with coverage, material findings, exact
-source/PR links, owner actions and limits. Preserve the existing reporting owner,
-route, materiality, history, deduplication and receipt safeguards in the private
-reference. A file-backed launcher changes where instructions are maintained; it
-does not change implementation authority, reporting policy or delivery proof.
-Do not add a watcher, notification channel, direct task-message requirement or
-test alert. A PR, policy result or worker report is not a user-delivery receipt.
+Maintenance may discover, assess carried patches, make bounded isolated fixes and
+publish under existing authority; it may not access live accounts, send account
+or third-party messages, acknowledge reads, change binary/service/session/lock/
+credentials, or perform device/recovery tests. Any original narrowly scoped
+mailbox exception must remain explicit in the private authority; no general inbox
+handling follows from it. Do not restart closed review loops or retry uncertainty.
 
-## Discovery and authority
+Assess replacement releases against applicable carried regressions: sync ownership
+and PID-bound IPC; paths with spaces; exact content, recipient and quote;
+uncertain-send reconciliation; placeholder/replay unread counts; pending markers
+and exact cutoffs including asynchronous echoes; crash/concurrent acknowledgements;
+media; transcription credential boundaries; framework independence; and store/
+settings compatibility. Release-note silence is not proof of repair. Source
+merged, installed binary, live adopted code and accepted behavior are distinct.
+Retire a patch only after applicable isolated and separately authorized installed/
+device acceptance with rollback. Never force live races or infer adoption from CI.
 
-Check relevant upstream releases and open/merged changes against the fork's
-actual capabilities and carried regressions. Record bounded coverage, exact
-source URLs/SHAs, release provenance and unexamined areas. Release-note silence
-is not proof of repair. Distinguish merged source, installed binary, live adopted
-code and accepted behavior. Connectivity or source tests alone do not prove live
-acceptance. Do not access accounts, change services or run live tests merely to
-perform maintenance discovery.
-
-Give each actionable finding a stable ID, original evidenced creation time,
-source, owner, current disposition, required action and material risk. Keep that
-identity across wording changes, reruns and new draft heads. Retain decision-only,
-ancestry-pending, owner-held, missing-test and unknown-publication findings.
-Record every actionable disposition in the existing authoritative maintenance
-record before publication, then append actual verified publication results.
-Never create a parallel inventory or erase unresolved history.
-
-On every normal maintenance run, reassess the latest retained findings whose
-draft-policy reason is `deduplication_inventory_incomplete`, even when no new
-publication is proposed. Use fresh authoritative open/closed fork PR evidence;
-complete relevant pagination and match stable ID, source issue/PR, branch and
-equivalent intent before asserting inventory completeness. A successful list
-query alone is insufficient. Reconcile historical reasons against current
-source and owner evidence: completed milestones need no replacement PR, merged
-work does not prove installed acceptance, and another owner's unresolved work
-stays with that owner. Rerun the reviewed policy with evidenced inputs and append
-only changed dispositions or material evidence within existing record/byte
-budgets, preserving identity, creation time and publication uncertainty. Keep PR
-inventory reconciliation separate from notification-history and delivery gates;
-neither clears the other. Report unavailable evidence explicitly; never invent
-completeness or open a PR merely to clear a HOLD.
-
-Before publishing, inspect the existing inventory AND authoritative open/closed
-fork PRs for stable ID, source issue/PR, branch and equivalent intent. Update only
-an owned open draft. Preserve another owner's work. Reconcile closed/merged work
-and unknown publication before retrying; never create a duplicate on uncertainty.
-
-A focused draft requires a concrete bounded change missing from the fork,
-no overlapping owner, isolated baseline/candidate evidence where meaningful,
-an exact tested head, tests, risks and rollout/rollback notes. Follow AGENTS.md
-and applicable repository skills. Include stable ID, upstream links, before/after,
-base/head SHAs, commands/results, carried-patch impact and unresolved acceptance.
-Privacy-safe evidence only. Verify actual remote URL, repository, base/head and
-draft state after publication. The decision function grants no authority: actual
-publication still requires the current operator's authorization. No automatic
-approval, merge, release, deployment or upstream publication. Keep work in draft
-while implementation, applicable tests or independent review is incomplete; a
-ready transition requires the separate exact-head promotion gate below.
+Retain every actionable disposition and its original identity across wording or
+head changes. Notification deduplication and receipts remain with the existing
+consumer/parent; PR inventory reconciliation does not clear notification gates.
+Record notification intent before an authorized user alert and its actual receipt
+afterward, preserving unknown attempts. A ledger block, PR, worker report or relay
+submission is not a user-delivery receipt. No new watcher, channel or test alert.
 
 ## Portable policy contract v1
 
