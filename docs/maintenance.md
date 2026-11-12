@@ -10,12 +10,18 @@ Follow `AGENTS.md` for implementation, tests and PR requirements.
 Keep the scheduled entry short:
 
 > Read and follow `<checkout>/docs/maintenance.md` and
-> `<private-maintenance>/bindings.md` for this maintenance run.
+> `<checkout>/.maintenance-private/bindings.md` for this maintenance run.
 
 Resolve the placeholders to reviewed absolute paths at installation. Private
 bindings identify the existing task/owner, canonical repositories, current finding
 register, history, carried-fix references, publication authority and result relay.
-Keep those bindings and records outside the public repository. Missing required
+Keep those bindings and records in the ignored root `.maintenance-private/`
+directory, excluded from public Git. Before copying private data, require zero
+tracked contents (`git ls-files -- .maintenance-private/` must be empty) and verify
+effective exclusion for every target path with `git check-ignore --quiet --no-index`.
+HOLD if either check fails; ignoring a path does not untrack existing content.
+Gitignore controls normal staging, not access or security; retain owner-only
+permissions and reviewed backups. Missing required
 bindings mean HOLD with an honest local result; do not guess paths or recipients.
 
 Use the same authority for manual and scheduled runs. Obtain actual time and
