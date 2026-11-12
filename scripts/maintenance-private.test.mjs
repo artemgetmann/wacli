@@ -100,3 +100,10 @@ test('private record locations are fixed relative to the document checkout', (t)
   assert.doesNotMatch(runbook, /\/Users\//);
   assert.match(runbook, /DRAFT PR only in\n`artemgetmann\/wacli`/);
 });
+
+test('public findings exclude private routing and raw operational records', () => {
+  const findings = readFileSync(new URL('../docs/maintenance-findings.md', import.meta.url), 'utf8');
+  assert.doesNotMatch(findings, /\/Users\/|[A-Z]:\\Users\\|file:\/\//i);
+  assert.doesNotMatch(findings, /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i);
+  assert.doesNotMatch(findings, /Sentinel_|wacli:maintenance:|relay-intent|relay-outcome|"notification_status"/);
+});

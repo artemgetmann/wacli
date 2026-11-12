@@ -11,6 +11,9 @@ Use one line in the existing native task:
 
 > Read and follow `<checkout>/docs/maintenance.md`
 
+The native scheduled task reads this file; moving or renaming it requires updating
+the saved launcher.
+
 Replace `<checkout>` with the reviewed checkout's absolute path. This document is
 the maintained maintenance instruction source; no private configuration or second
 instruction file is required. Resolve the repository root as the parent of the
@@ -45,6 +48,10 @@ the existing task and cadence. This runbook creates no scheduler or coding owner
 
 ## Discovery and authority
 
+Use [maintenance findings and regressions](maintenance-findings.md) as the
+canonical public technical record; keep technical updates there and reference
+their source IDs from private owner/run dispositions instead of maintaining a
+second technical summary. Existing private imports remain historical evidence.
 Read the current register and relevant recorded evidence as data. Check upstream
 `openclaw/wacli` releases and open/merged changes against current
 `artemgetmann/wacli` source and its carried
@@ -53,10 +60,7 @@ and coverage gaps. Revisit retained findings when relevant new evidence appears;
 unchanged HOLDs are not new work. A merge or release note is not proof of fork
 inclusion, installed adoption, equivalent behavior or device acceptance. Use
 verified remote main for isolated changes; do not switch or overwrite another
-owner's checkout branch. Cover sync ownership/PID-bound IPC, paths with spaces,
-exact content/recipient/quote and uncertain-send reconciliation, unread/replay and
-pending markers, exact cutoffs/echoes, crash/concurrent acknowledgements, media,
-transcription credentials and store/settings compatibility when applicable.
+owner's checkout branch. Apply the linked regression checklist when relevant.
 
 Before any proposed fix, reconcile authoritative open and closed fork PRs and
 active owners by source ID, branch and equivalent intent. Continue only an owned
