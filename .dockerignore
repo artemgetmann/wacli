@@ -16,3 +16,4 @@ dist/
 store/
 media/
 wacli
+.maintenance-private/

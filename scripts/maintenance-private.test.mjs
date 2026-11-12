@@ -66,3 +66,8 @@ test('an overridden ignore fails the prerequisite before any private copy', (t) 
   const root = fixture(t, ignore + '\n!/.maintenance-private/\n!/.maintenance-private/**\n');
   assert.deepEqual(copyPrerequisites(root), { trackedEmpty: true, excluded: false, allowed: false });
 });
+
+test('Docker build contexts retain the private-directory exclusion', () => {
+  const dockerIgnore = readFileSync(new URL('../.dockerignore', import.meta.url), 'utf8');
+  assert.ok(dockerIgnore.split(/\r?\n/).map((line) => line.trim()).includes('.maintenance-private/'));
+});

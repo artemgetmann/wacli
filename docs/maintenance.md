@@ -20,6 +20,8 @@ directory, excluded from public Git. Before copying private data, require zero
 tracked contents (`git ls-files -- .maintenance-private/` must be empty) and verify
 effective exclusion for every target path with `git check-ignore --quiet --no-index`.
 HOLD if either check fails; ignoring a path does not untrack existing content.
+Adopt the matching `.dockerignore` exclusion before copying: Git-ignored files
+can otherwise enter local Docker build contexts.
 Gitignore controls normal staging, not access or security; retain owner-only
 permissions and reviewed backups. Missing required
 bindings mean HOLD with an honest local result; do not guess paths or recipients.
