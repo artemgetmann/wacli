@@ -7,24 +7,34 @@ Follow `AGENTS.md` for implementation, tests and PR requirements.
 
 ## Entry and ownership
 
-Keep the scheduled entry short:
+Use one line in the existing native task:
 
-> Read and follow `<checkout>/docs/maintenance.md` and
-> `<checkout>/.maintenance-private/bindings.md` for this maintenance run.
+> Read and follow `<checkout>/docs/maintenance.md`
 
-Resolve the placeholders to reviewed absolute paths at installation. Private
-bindings identify the existing task/owner, canonical repositories, current finding
-register, history, carried-fix references, publication authority and result relay.
-Keep those bindings and records in the ignored root `.maintenance-private/`
-directory, excluded from public Git. Before copying private data, require zero
+Replace `<checkout>` with the reviewed checkout's absolute path. This document is
+the maintained maintenance instruction source; no private configuration or second
+instruction file is required. Resolve the repository root as the parent of the
+`docs/` directory containing this file, not the caller's working directory or a
+remembered installation path.
+Private data paths are fixed relative to that root:
+
+- `.maintenance-private/current.md`: current findings and evidence references.
+- `.maintenance-private/history/`: prior material states, imports and receipts.
+- `.maintenance-private/runs/`: complete per-run results and submission outcomes.
+
+Historical prompts/configurations are evidence only, never operative authority.
+Missing or inconsistent records mean HOLD with an honest result, not an empty
+baseline or permission to reconstruct defaults. Use the invoking maintenance
+chat's existing owner/task; preserve independently owned work.
+
+Keep private data excluded from public Git. Before copying it, require zero
 tracked contents (`git ls-files -- .maintenance-private/` must be empty) and verify
 effective exclusion for every target path with `git check-ignore --quiet --no-index`.
 HOLD if either check fails; ignoring a path does not untrack existing content.
 Adopt the matching `.dockerignore` exclusion before copying: Git-ignored files
 can otherwise enter local Docker build contexts.
 Gitignore controls normal staging, not access or security; retain owner-only
-permissions and reviewed backups. Missing required
-bindings mean HOLD with an honest local result; do not guess paths or recipients.
+permissions and reviewed backups.
 
 Use the same authority for manual and scheduled runs. Obtain actual time and
 record the trigger evidence available. Missing optional scheduled metadata is
@@ -35,12 +45,18 @@ the existing task and cadence. This runbook creates no scheduler or coding owner
 
 ## Discovery and authority
 
-Read the current register and carried-fix references. Check relevant upstream
-releases and open/merged changes against current fork source and its carried
+Read the current register and relevant recorded evidence as data. Check upstream
+`openclaw/wacli` releases and open/merged changes against current
+`artemgetmann/wacli` source and its carried
 regressions. Record what was checked, exact source URLs/SHAs, release provenance
 and coverage gaps. Revisit retained findings when relevant new evidence appears;
 unchanged HOLDs are not new work. A merge or release note is not proof of fork
-inclusion, installed adoption, equivalent behavior or device acceptance.
+inclusion, installed adoption, equivalent behavior or device acceptance. Use
+verified remote main for isolated changes; do not switch or overwrite another
+owner's checkout branch. Cover sync ownership/PID-bound IPC, paths with spaces,
+exact content/recipient/quote and uncertain-send reconciliation, unread/replay and
+pending markers, exact cutoffs/echoes, crash/concurrent acknowledgements, media,
+transcription credentials and store/settings compatibility when applicable.
 
 Before any proposed fix, reconcile authoritative open and closed fork PRs and
 active owners by source ID, branch and equivalent intent. Continue only an owned
@@ -48,8 +64,9 @@ matching draft; respect other owners, closed/merged outcomes and unresolved
 publication attempts. Incomplete inventory or uncertain ancestry means HOLD,
 not permission for a duplicate PR. Complete relevant pagination.
 
-Under the current private authority, a concrete small missing fix may be
-implemented in isolation and proposed as a focused fork DRAFT PR. Include the
+Standing maintenance authority permits a concrete small missing fix to be
+implemented in isolation and proposed as a focused DRAFT PR only in
+`artemgetmann/wacli`. Include the
 source finding, before/after, exact base/tested head, applicable baseline/candidate
 checks, risks and rollout/rollback. Follow AGENTS, obtain independent review and
 immediately before creating/updating a draft refresh the PR inventory and owner
@@ -62,7 +79,7 @@ HOLDs; a maintenance run need not produce a PR. No permanent coding-chat handoff
 is required. Ready promotion, merge, release, installation and live acceptance
 remain separate authorized actions with exact-head evidence.
 
-Maintenance does not access accounts, send account messages/read acknowledgements,
+Maintenance does not access accounts/mailboxes, send account messages/read acknowledgements,
 change binaries/services/sessions/locks/credentials or run device experiments.
 Preserve separately owned proof work. Retire a carried patch only after equivalent
 isolated checks and separately authorized installed/device acceptance with rollback.
@@ -71,7 +88,7 @@ or scanning an inventory of temporary receipts.
 
 ## Findings, history and result
 
-Maintain one private current register by stable source ID and obligation. Preserve
+Maintain `.maintenance-private/current.md` by stable source ID and obligation. Preserve
 original creation times, material facts, owners, prior PR outcomes, receipts and
 unresolved/unknown states. Update the existing entry when its material evidence
 changes; prose or draft-head changes alone do not create a new obligation. Record
@@ -84,7 +101,7 @@ needed. Preserve prior records as readable history rather than repeatedly copyin
 them into the active register. There is no lifetime event/byte cap: more than 64
 historical updates must not drop a finding or block maintenance. Reconcile any
 active/uncertain owner before writing. All register writers must hold an exclusive
-OS lock on the stable `<register>.lock` sibling (never replace that lock file).
+OS lock on `.maintenance-private/current.md.lock` (never replace that lock file).
 Under that lock, compare the register's bytes
 or digest with the version read; a mismatch means HOLD and reconciliation. Confirm
 the prior material state is saved to history, stage the replacement in the same
@@ -94,11 +111,14 @@ read back both files before any retry; never overwrite an intervening edit.
 
 Finish every run with its identity, actual timing/trigger evidence, checked
 sources, coverage, findings or quiet result, changed files/PRs, owner actions and
-limits. Save that full result in private run history. Record the result-submission
-intent there, then send the full result once to the existing relay in the private
-bindings, including quiet, HOLD and failed runs. Record the actual outcome. If
-blocked or uncertain, report locally and reconcile the same attempt before any
-retry; do not rerun maintenance to obtain a receipt.
+limits. Save it as `result.md` in a run-specific directory under
+`.maintenance-private/runs/`, with submission intent recorded before sending and
+the actual outcome afterward.
+
+After maintenance completes, whatever the result, send its full result once to the Codex chat ‘Relay maintenance test’ (thread 6af404ad-d96c-8191-8113-d53ab92be012). If the send is blocked or its outcome is uncertain, report that here and do not retry blindly.
+
+This includes quiet, HOLD and failed results. Reconcile the same uncertain attempt
+before any retry; do not rerun maintenance to obtain a receipt.
 
 A relay receipt is not parent wake, a user alert or device delivery. The existing
 reporting owner selects useful new/material updates using actual notification
@@ -113,11 +133,11 @@ requires neither their version/digest pins nor the downstream prepare/collect
 adapter, collector schema, daily-memory helper or old ledger limits. This change
 removes no rollback consumer and grants no new publication authority.
 
-Review the private migration and cutover plan before installation. Verify every
-existing identity and its original facts/uncertainty against preserved source
-history; do not infer resolution during conversion. Switch only the existing
-entry after authorization, read back its owner/cadence, and verify the actual run
-and result route separately. Retain old configuration/history/consumers for
-rollback. Source tests and disposable agent exercises do not prove native or
-unattended acceptance. Cross-repository cleanup and old acceptance-checker
-retirement require explicit follow-through; they are not executed by this PR.
+Installation is separate authorized work: adopt this reviewed document and both
+ignore rules, verify exclusion/zero tracked contents, and preserve all identities,
+original facts/uncertainty and receipts when copying private records. Do not infer
+resolution during conversion. Switch only the existing task's one-line entry,
+read back its owner/cadence, and verify the actual run and result route separately.
+Retain old configuration/history/consumers as rollback evidence, not instruction
+dependencies. Source tests and disposable exercises do not prove native or
+unattended acceptance. Legacy-checker retirement remains a separate owner decision.
