@@ -10,6 +10,23 @@ Read `message-drafting` for recipient-facing composition and approval behavior.
 Draft from sufficient supplied context without inspecting the destination.
 Never send without explicit current-chat recipient/payload authority.
 
+## Freshness and requested actions
+
+- For a requested read, return available messages with their timestamps and
+  known coverage limits. An old sync milestone alone neither blocks the read
+  nor proves missing messages. Archive silence is not proof of no current reply.
+- For an unconditional approved one-time send, retain the final account,
+  recipient, payload, context and prior-attempt checks below. An old sync
+  milestone alone is not a reason to block an otherwise safe, authorized send.
+  Do not claim current coverage when it has not been established.
+- For any action conditional on no reply, including a manually requested
+  reminder, establish sufficient current recipient history before deciding
+  that the condition is met. Apply the same rule to autonomous follow-ups.
+- Preserve the existing accepted/uncertain-send reconciliation rules. Unresolved
+  identity, authorization, readiness or prior dispatch remains a real blocker.
+
+These distinctions do not authorize refresh, recovery or infrastructure changes.
+
 - Read an exact conversation: `wacli agent recent-reply --target <phone-or-jid> --json`.
 - Monitor only an explicitly scoped target: `wacli agent monitor-check --target <target> --state-file <private-state-path> --json`.
 - Checks never acknowledge work. After every required downstream step succeeds, call `wacli agent monitor-ack --target <same-target> --chat <snapshot-chat> --id <snapshot-id> --ack-token <returned-token> --state-file <same-state-path> --json`. Use the exact returned snapshot and token; never acknowledge a newer message or blocked/unhandled work. A failed acknowledgement leaves work pending and never permits resending an accepted message.
