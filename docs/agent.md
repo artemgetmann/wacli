@@ -119,3 +119,11 @@ cannot unsend a message or undo WhatsApp account state.
 Some legacy filenames (`openclaw-sync-owner.json`, `openclaw-sync.log`, and the
 per-store operation lock) remain for safe migration; they are not dependencies.
 Do not start two owners or clear a live lock merely because a filename is old.
+Run owner management through the installed `wacli agent live` commands. Retired
+standalone helper scripts can share these filenames while failing to recognize
+the current sync command; they can overwrite a healthy owner's metadata with
+the PID of a competing process that subsequently fails to acquire the lock.
+Do not run archived helpers against an active store. A dead recorded owner with
+a live lock holder is an ownership conflict: preserve the lock and establish
+the live process's exact command, IPC identity and original run evidence before
+repairing metadata. Never create new connection evidence merely to pass health.
