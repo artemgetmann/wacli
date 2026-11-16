@@ -108,8 +108,8 @@ export async function safeSend(kind: "text" | "file", argv: string[], runner: Ru
   if (!/^\+?[\d ()-]+$/.test(to) && !/^\d+(?:-\d+)?@(s\.whatsapp\.net|lid|g\.us)$/.test(to)) throw new Error("Safe sends require an exact phone number or chat JID");
   const text = await exactText(kind === "text" ? flags.message : flags.caption, kind === "text" ? flags["message-file"] : flags["caption-file"], kind === "text");
   if (kind === "file" && (flags["allow-self"] || flags["no-preview"])) throw new Error("--allow-self and --no-preview apply to text sends only");
-  const policy = flags["read-policy"] || "preserve";
-  if (!["preserve", "handled"].includes(String(policy))) throw new Error("--read-policy must be preserve or handled");
+  const policy = flags["read-policy"] || (kind === "text" ? "reply" : "preserve");
+  if (!["reply", "preserve", "handled"].includes(String(policy))) throw new Error("--read-policy must be reply, preserve or handled");
   if (policy === "handled" && !flags["handled-through"]) throw new Error("Handled read state requires --handled-through");
   if (flags["handled-through"] && policy !== "handled") throw new Error("--handled-through requires --read-policy handled");
   if (flags["reply-to-sender"] && !flags["reply-to"]) throw new Error("--reply-to-sender requires --reply-to");
@@ -133,7 +133,7 @@ export async function safeSend(kind: "text" | "file", argv: string[], runner: Ru
     timings.ownerReadyMs = performance.now() - readyStarted;
     if (owner.sendReady !== true) throw new Error(`WhatsApp send owner is not ready; nothing was dispatched. ${owner.message || "Check owner readiness before retrying."}`);
     const args = ["--store", store, "--timeout", `${timeout}ms`, "send", kind, "--to", to, "--json"];
-    if (kind === "text") args.push("--message", text); else args.push("--file", String(flags.file), "--caption", text);
+    if (kind === "text") { args.push("--message", text); if (policy !== "reply") args.push("--preserve-unread"); } else args.push("--file", String(flags.file), "--caption", text);
     for (const key of ["reply-to", "reply-to-sender"]) if (flags[key]) args.push(`--${key}`, String(flags[key]));
     for (const key of ["allow-self", "no-preview"]) if (flags[key]) args.push(`--${key}`);
     const dispatchedAt = performance.now();
@@ -148,6 +148,12 @@ export async function safeSend(kind: "text" | "file", argv: string[], runner: Ru
     const id = typeof data?.id === "string" ? data.id : undefined;
     let verification: any = { status: "unverified", reason: "No structured exact send receipt; dispatch may be uncertain" };
     let readState: any = { status: "not_attempted", policy, reason: "Conversation remains pending" };
+    if (policy === "reply" && accepted) readState = {
+      status: data?.local_read?.status || "unverified", policy,
+      throughMessageId: data?.local_read?.through_message_id,
+      deviceVerified: false,
+      reason: data?.local_read ? undefined : "Owner did not report bounded local unread completion",
+    };
     const verifyStart = performance.now();
     if (accepted && chat && id) {
       const deadline = performance.now() + settle;

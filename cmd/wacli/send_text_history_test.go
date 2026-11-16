@@ -168,3 +168,73 @@ func TestSendTextHistorySaveFailureDoesNotResend(t *testing.T) {
 		t.Fatalf("send calls=%d reconnects=%d", sender.protoCalls, reconnects)
 	}
 }
+
+func TestSuccessfulReplyClearsOnlyPreDispatchInbound(t *testing.T) {
+	for _, tc := range []struct {
+		name                      string
+		newer, preserve, failSave bool
+		want                      int
+	}{
+		{name: "handled", want: 0}, {name: "new same-second arrival", newer: true, want: 1},
+		{name: "explicit preserve", preserve: true, want: 1}, {name: "save failure", failSave: true, want: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openSendTestDB(t)
+			to := types.NewJID("15550000001", types.DefaultUserServer)
+			at := time.Now().UTC().Truncate(time.Second)
+			if err := db.UpsertChat(to.String(), "dm", "Fixture", at); err != nil {
+				t.Fatal(err)
+			}
+			insert := func(id string) {
+				t.Helper()
+				if err := db.UpsertMessage(store.UpsertMessageParams{ChatJID: to.String(), MsgID: id, Timestamp: at, Text: "inbound"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			insert("before")
+			if err := db.SetChatUnreadCount(to.String(), 1); err != nil {
+				t.Fatal(err)
+			}
+			sender := &recordingTextSender{}
+			transport := &historyTextWA{sender: sender, afterSend: func() {
+				if tc.newer {
+					insert("after")
+					if err := db.IncrementChatUnread(to.String()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if tc.failSave {
+					db.Close()
+				}
+			}}
+			a := &fakeSendFileApp{wa: transport, db: db}
+			id, warning, err := sendTextWithHistory(context.Background(), a, nil, to, "reply", "", "", nil, nil, textEphemeralOptions{}, textSendOptions{preserveUnread: tc.preserve})
+			if err != nil || id == "" {
+				t.Fatalf("id=%q warning=%v err=%v", id, warning, err)
+			}
+			if tc.failSave {
+				if warning == nil {
+					t.Fatal("accepted save failure must be a warning")
+				}
+				return
+			}
+			if warning != nil {
+				t.Fatal(warning)
+			}
+			chat, err := db.GetChat(to.String())
+			if err != nil || chat.UnreadCount != tc.want || chat.Unread != (tc.want > 0) {
+				t.Fatalf("chat=%+v err=%v want count %d", chat, err, tc.want)
+			}
+			// Re-saving an outgoing echo must not acknowledge later unanswered input.
+			if tc.newer {
+				if err := persistOutboundTextWith(context.Background(), db, transport, to, string(id), "reply", time.Now()); err != nil {
+					t.Fatal(err)
+				}
+				chat, _ = db.GetChat(to.String())
+				if chat.UnreadCount != 1 {
+					t.Fatal("echo cleared newer inbound")
+				}
+			}
+		})
+	}
+}

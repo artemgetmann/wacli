@@ -50,7 +50,7 @@ test("exact multiline text and quote pass through; inspection does not mark read
     const text = "line one\n`$(not-a-shell-command)` $literal";
     const calls: string[][] = [];
     f.db.prepare("INSERT INTO messages VALUES(?,?,1,?,NULL,NULL,NULL,?)").run(chat, "TEST-SENT", text, "ORIGINAL");
-    const result = await safeSend("text", ["--store", f.dir, "--to", chat, "--message", text, "--reply-to", "ORIGINAL"], async (args) => { calls.push(args); return accepted(); });
+    const result = await safeSend("text", ["--store", f.dir, "--to", chat, "--message", text, "--reply-to", "ORIGINAL", "--read-policy", "preserve"], async (args) => { calls.push(args); return accepted(); });
     assert.equal(calls.length, 1);
     assert.equal(calls[0][calls[0].indexOf("--message") + 1], text);
     assert.equal(calls[0][calls[0].indexOf("--reply-to") + 1], "ORIGINAL");
@@ -162,7 +162,7 @@ test("mapped LID receipts verify the canonical exact target without another send
     assert.equal(sends, 1);
     assert.equal(result.verification.status, "verified_local");
     assert.equal(result.verification.chatJid, chat);
-    assert.equal(result.readState.status, "not_attempted");
+    assert.equal(result.readState.status, "unverified");
   } finally { session.close(); await f.close(); }
 });
 
@@ -178,4 +178,19 @@ test("an exact ID under another recipient cannot satisfy send verification", asy
     assert.match(result.verification.reason, /recipient/);
     assert.equal(result.readState.status, "not_attempted");
   } finally { await f.close(); }
+});
+
+
+test("ordinary reply reports local completion separately from device proof", async () => {
+ const f=await fixture();
+ try {
+  f.db.prepare("INSERT INTO messages VALUES(?,?,1,'hello',NULL,NULL,NULL,NULL)").run(chat,"TEST-SENT");
+  const result=await safeSend("text",["--store",f.dir,"--to",chat,"--message","hello"],async args=>{
+   assert.equal(args.includes("--preserve-unread"),false);
+   return accepted({local_read:{status:"cleared_through",through_message_id:"BEFORE",device_verified:false}});
+  });
+  assert.equal(result.readState.status,"cleared_through");
+  assert.equal(result.readState.throughMessageId,"BEFORE");
+  assert.equal(result.readState.deviceVerified,false);
+ } finally {await f.close();}
 });

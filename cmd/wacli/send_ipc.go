@@ -42,6 +42,7 @@ type sendDelegateRequest struct {
 	ReplyToSender        string   `json:"reply_to_sender,omitempty"`
 	NoPreview            bool     `json:"no_preview,omitempty"`
 	AllowSelf            bool     `json:"allow_self,omitempty"`
+	PreserveUnread       bool     `json:"preserve_unread,omitempty"`
 	Ephemeral            bool     `json:"ephemeral,omitempty"`
 	EphemeralDuration    string   `json:"ephemeral_duration,omitempty"`
 	EphemeralDurationSet bool     `json:"ephemeral_duration_set,omitempty"`
@@ -84,6 +85,7 @@ type sendDelegateRequest struct {
 }
 
 type sendDelegateResponse struct {
+	LocalRead      *textReplyReadState  `json:"local_read,omitempty"`
 	OK             bool                 `json:"ok"`
 	Error          string               `json:"error,omitempty"`
 	Sent           bool                 `json:"sent,omitempty"`
@@ -628,12 +630,13 @@ func executeDelegatedText(ctx context.Context, a *app.App, req sendDelegateReque
 	}
 	preview, previewWarning := fetchLinkPreview(ctx, req.Message, req.NoPreview)
 	var thumbnailWarning string
-	msgID, storeErr, err := sendTextWithHistory(ctx, a, reconnectForSend(a), toJID, req.Message, req.ReplyTo, req.ReplyToSender, preview, mentionedJIDs, ephemeral, textSendOptions{allowSelf: req.AllowSelf, warn: func(msg string) { thumbnailWarning = msg }})
+	localRead := textReplyReadState{Status: "not_attempted"}
+	msgID, storeErr, err := sendTextWithHistory(ctx, a, reconnectForSend(a), toJID, req.Message, req.ReplyTo, req.ReplyToSender, preview, mentionedJIDs, ephemeral, textSendOptions{allowSelf: req.AllowSelf, preserveUnread: req.PreserveUnread, localRead: &localRead, warn: func(msg string) { thumbnailWarning = msg }})
 	if err != nil {
-		return sendDelegateResponse{}, err
+		return sendDelegateResponse{LocalRead: &localRead}, err
 	}
 	waitForPostSendRetryReceipts(ctx, millisDuration(req.PostSendWaitMS, 0))
-	resp := sendDelegateResponse{OK: true, Sent: true, To: toJID.String(), ID: string(msgID), PreviewWarning: previewWarning, ThumbWarning: thumbnailWarning}
+	resp := sendDelegateResponse{LocalRead: &localRead, OK: true, Sent: true, To: toJID.String(), ID: string(msgID), PreviewWarning: previewWarning, ThumbWarning: thumbnailWarning}
 	if storeErr != nil {
 		resp.StoreWarning = storeErr.Error()
 	}
@@ -745,6 +748,9 @@ func writeDelegatedSendOutput(flags *rootFlags, kind string, resp sendDelegateRe
 	warnSendStoreFailureMsg(os.Stderr, resp.ID, resp.StoreWarning)
 	if flags.asJSON {
 		body := map[string]any{"sent": resp.Sent, "to": resp.To, "id": resp.ID}
+		if resp.LocalRead != nil {
+			body["local_read"] = resp.LocalRead
+		}
 		if resp.File != nil {
 			body["file"] = resp.File
 		}

@@ -11,6 +11,7 @@ import {
   readLogTail,
   ensureOwner,
   probeSendReady,
+  probeProcess,
 } from "./live.ts";
 
 test("new and legacy exact owner argv match, unrelated processes do not", () => {
@@ -268,4 +269,14 @@ test("ownership, run identity, and connection are independent health evidence", 
   assert.equal(hasCurrentRunConnection({ ...base, logIdentityMatches: false }), false);
   assert.equal(hasCurrentRunConnection({ ...base, lockHeldByOwner: false }), false);
   assert.equal(hasCurrentRunConnection({ ...base, lastLifecycleEvent: "disconnected" }), false);
+});
+
+
+test("only definite process absence permits owner cleanup", () => {
+  assert.equal(probeProcess(1, () => undefined), "alive");
+  for (const code of ["EPERM", "EACCES", "EIO", undefined]) {
+    assert.equal(probeProcess(1, () => { throw Object.assign(new Error("probe failed"), {code}); }), "unknown");
+  }
+  assert.equal(probeProcess(1, () => { throw Object.assign(new Error("gone"), {code: "ESRCH"}); }), "dead");
+  assert.equal(probeProcess(-1, () => { assert.fail("invalid PID must not reach OS"); }), "unknown");
 });

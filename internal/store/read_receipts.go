@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const receiptEligible = "chat_jid = ? AND from_me = 0 AND revoked = 0 AND deleted_for_me = 0 AND deleted_at IS NULL AND COALESCE(reaction_to_id,'') = '' AND COALESCE(reaction_emoji,'') = '' AND (COALESCE(display_text,'') != '(message)' OR TRIM(COALESCE(text,'')) != '')"
@@ -183,4 +184,17 @@ func (d *DB) SelfReadReceiptCandidatesThrough(jid, id string) ([]MessageInfo, er
 		return nil, err
 	}
 	return msgs, tx.Commit()
+}
+
+// LatestReplyBoundary captures only readable inbound content before a reply is
+// dispatched. Replays, edits and outgoing-history saves do not call this path.
+func (d *DB) LatestReplyBoundary(jid string) (MessageInfo, error) {
+	m := MessageInfo{ChatJID: jid}
+	var ts int64
+	err := d.sql.QueryRow("SELECT msg_id, ts FROM messages WHERE "+selfReceiptEligible+" ORDER BY ts DESC, rowid DESC LIMIT 1", jid).Scan(&m.MsgID, &ts)
+	if err != nil {
+		return MessageInfo{}, err
+	}
+	m.Timestamp = time.Unix(ts, 0).UTC()
+	return m, nil
 }

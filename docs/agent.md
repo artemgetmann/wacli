@@ -49,7 +49,15 @@ the exact chat/message ID against read-only history. Attachments require a
 matching plaintext hash, media type and caption; caption alone is not proof.
 It uses upstream daemon delegation and does not routinely stop the sync owner.
 
-Default `--read-policy preserve` leaves the conversation pending. Only when all
+Ordinary text replies default to `--read-policy reply`. The shared direct and
+delegated send path captures the latest readable inbound before dispatch, then
+clears local unread only through that boundary after acceptance and local save.
+Newer arrivals, including the same second, remain pending. JSON `local_read` and
+agent `readState` describe this local result; `device_verified` remains false.
+This does not send read receipts or prove a Desktop or phone badge changed.
+
+Use `--read-policy preserve` for partial replies; raw text sends expose the same
+choice as `--preserve-unread`. File sends still default to preserve. Only when all
 requests through a known snapshot have been handled, use:
 
 ```sh
