@@ -48,6 +48,8 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 	var replyToSender string
 	var noPreview bool
 	var allowSelf bool
+	var preserveUnread bool
+	var handledThrough string
 	var ephemeral bool
 	var ephemeralDuration string
 	var messageEscapes bool
@@ -85,7 +87,7 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 			a, lk, err := newApp(ctx, flags, true, false)
 			if err != nil {
 				resp, delegated, delegateErr := tryDelegateSend(ctx, flags, err, sendDelegateRequest{
-					Kind:                 "text",
+					Kind:                 textDelegateKind(handledThrough),
 					To:                   to,
 					Pick:                 pick,
 					Message:              message,
@@ -94,6 +96,8 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 					ReplyToSender:        replyToSender,
 					NoPreview:            noPreview,
 					AllowSelf:            allowSelf,
+					PreserveUnread:       preserveUnread,
+					HandledThrough:       handledThrough,
 					Ephemeral:            ephemeralOpts.Enabled,
 					EphemeralDuration:    ephemeralOpts.Duration,
 					EphemeralDurationSet: ephemeralOpts.DurationSet,
@@ -135,7 +139,8 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 			}
 
 			preview, previewWarning := fetchLinkPreview(ctx, message, noPreview)
-			msgID, storeErr, err := sendTextWithHistory(ctx, a, reconnectForSend(a), toJID, message, replyTo, replyToSender, preview, mentionedJIDs, ephemeralOpts, textSendOptions{allowSelf: allowSelf, warn: func(msg string) { warnLinkPreviewThumbnail(os.Stderr, msg) }})
+			localRead := textReplyReadState{Status: "not_attempted"}
+			msgID, storeErr, err := sendTextWithHistory(ctx, a, reconnectForSend(a), toJID, message, replyTo, replyToSender, preview, mentionedJIDs, ephemeralOpts, textSendOptions{allowSelf: allowSelf, preserveUnread: preserveUnread, handledThrough: handledThrough, localRead: &localRead, warn: func(msg string) { warnLinkPreviewThumbnail(os.Stderr, msg) }})
 			if err != nil {
 				return err
 			}
@@ -147,9 +152,10 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 
 			if flags.asJSON {
 				return out.WriteJSON(os.Stdout, addStoreWarning(map[string]any{
-					"sent": true,
-					"to":   chat.String(),
-					"id":   msgID,
+					"local_read": localRead,
+					"sent":       true,
+					"to":         chat.String(),
+					"id":         msgID,
 				}, storeErr))
 			}
 			fmt.Fprintf(os.Stdout, "Sent to %s (id %s)\n", chat.String(), msgID)
@@ -164,6 +170,9 @@ func newSendTextCmd(flags *rootFlags) *cobra.Command {
 	cmd.Flags().StringVar(&replyTo, "reply-to", "", "message ID to quote/reply to")
 	cmd.Flags().StringVar(&replyToSender, "reply-to-sender", "", "sender JID of the quoted message (required for unsynced group replies)")
 	cmd.Flags().BoolVar(&noPreview, "no-preview", false, "disable automatic link previews for the first URL in text")
+	cmd.Flags().BoolVar(&preserveUnread, "preserve-unread", false, "leave local unread state pending after this text send")
+	cmd.Flags().StringVar(&handledThrough, "handled-through", "", "privately acknowledge known pending input through this explicitly answered inbound ID")
+	cmd.MarkFlagsMutuallyExclusive("preserve-unread", "handled-through")
 	cmd.Flags().BoolVar(&allowSelf, "allow-self", false, "allow sending to the linked account itself (delivery is not guaranteed)")
 	cmd.Flags().BoolVar(&ephemeral, "ephemeral", false, "send with the disappearing-message timer for this chat")
 	cmd.Flags().StringVar(&ephemeralDuration, "ephemeral-duration", "", "disappearing-message timer override (for example 24h, 7d, 90d, 168h)")
@@ -269,7 +278,10 @@ type textEphemeralOptions struct {
 }
 
 type textSendOptions struct {
-	allowSelf bool
+	localRead      *textReplyReadState
+	preserveUnread bool
+	handledThrough string
+	allowSelf      bool
 	// Capture the context constructed for the accepted native message. History
 	// must not reconstruct its participant from flags or a second store lookup.
 	replyContext **waProto.ContextInfo

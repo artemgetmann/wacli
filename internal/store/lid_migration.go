@@ -190,6 +190,20 @@ func (d *DB) LIDMigrationPurgedMedia(lidJID, pnJID string) ([]MessageLocalMedia,
 }
 
 func migrateLIDChatToPN(tx *sql.Tx, lidJID, pnJID string) error {
+	// Retain both aliases' dispatch guards, so even an ID-less native read echo
+	// under the canonical identity cannot clear a later unanswered arrival.
+	if _, err := tx.Exec(`INSERT INTO inbound_read_state(chat_jid,msg_id,pending,attempted,completed)
+ SELECT ?,msg_id,0,1,completed FROM inbound_read_state WHERE chat_jid=? AND attempted=1
+ ON CONFLICT(chat_jid,msg_id) DO UPDATE SET attempted=1,completed=MAX(inbound_read_state.completed,excluded.completed)`, pnJID, lidJID); err != nil {
+		return err
+	}
+
+	// A merged scalar count cannot establish exact unread membership. Retain
+	// historical attempt guards at both identities for global echo suppression.
+	if _, err := tx.Exec(`UPDATE inbound_read_state SET pending=0 WHERE chat_jid IN (?,?) AND (
+ EXISTS(SELECT 1 FROM chats WHERE jid=?) OR EXISTS(SELECT 1 FROM messages WHERE chat_jid=?))`, lidJID, pnJID, lidJID, lidJID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`
 		INSERT INTO chats(jid, kind, name, last_message_ts, unread, unread_count)
 		SELECT

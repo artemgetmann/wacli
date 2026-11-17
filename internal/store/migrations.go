@@ -49,6 +49,7 @@ var schemaMigrations = []migration{
 	{version: 33, name: "ordered chat auto-unarchive", up: migrateChatAutoUnarchive},
 	{version: 34, name: "app state delivery checkpoint", up: migrateAppStateDeliveryCheckpoint},
 	{version: 35, name: "app state delivery device binding", up: migrateAppStateDeliveryDevice},
+	{version: 36, name: "exact inbound read membership", up: migrateInboundReadState},
 }
 
 func migratePlaceholderChatActivity(d *DB) error {
@@ -512,6 +513,9 @@ func (d *DB) ensureCurrentSchema() error {
 	}
 	if err := migrateChatAutoUnarchive(d); err != nil {
 		return fmt.Errorf("ensure chat auto-unarchive state: %w", err)
+	}
+	if err := migrateInboundReadState(d); err != nil {
+		return fmt.Errorf("ensure exact inbound read state: %w", err)
 	}
 	return nil
 }

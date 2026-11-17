@@ -28,7 +28,15 @@ type stateExecer interface {
 }
 
 func (d *DB) clearChatUnreadThrough(jid string, through time.Time, ids []string, preserveMarker bool) error {
-	return clearChatUnreadThroughOn(d.sql, jid, through, ids, preserveMarker)
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = clearChatUnreadThroughOn(tx, jid, through, ids, preserveMarker); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func clearChatUnreadThroughOn(db stateExecer, jid string, through time.Time, ids []string, preserveMarker bool) error {
 	jid = strings.TrimSpace(jid)
@@ -55,6 +63,9 @@ func clearChatUnreadThroughOn(db stateExecer, jid string, through time.Time, ids
 		// Legacy unbounded/timestamp-only updates keep their existing behavior.
 		guard = " AND unread_count <= (SELECT COUNT(*) FROM messages WHERE " + selfReceiptEligible + ")"
 		args = append(args, jid)
+	}
+	if _, err := db.ExecContext(storeCtx(), "UPDATE inbound_read_state SET pending=0 WHERE chat_jid=?", jid); err != nil {
+		return err
 	}
 	result, err := db.ExecContext(storeCtx(), `
   WITH position AS (SELECT ? AS ts, `+boundary+` AS row_id),

@@ -16,11 +16,35 @@ import (
 // workflow called by both the direct command and the socket delegate.
 type historyTextWA struct {
 	app.WAClient
-	sender    *recordingTextSender
-	afterSend func()
+	sender       *recordingTextSender
+	afterSend    func()
+	privateCalls [][]types.MessageID
+	privateErr   error
+	afterPrivate func()
+	sendFailure  error
+}
+
+func (w *historyTextWA) MarkReadSelf(_ context.Context, ids []types.MessageID, _ time.Time, _, _ types.JID, _ types.AddressingMode) error {
+	w.privateCalls = append(w.privateCalls, append([]types.MessageID(nil), ids...))
+	if w.afterPrivate != nil {
+		w.afterPrivate()
+	}
+	return w.privateErr
+}
+
+func (w *historyTextWA) GetUserInfo(context.Context, []types.JID) (map[types.JID]types.UserInfo, error) {
+	return nil, nil
+}
+
+func (w *historyTextWA) IsOnWhatsApp(context.Context, []string) ([]types.IsOnWhatsAppResponse, error) {
+	return nil, nil
 }
 
 func (w *historyTextWA) SendText(ctx context.Context, to types.JID, text string) (types.MessageID, error) {
+	if w.sendFailure != nil {
+		w.sender.textCalls++
+		return "", w.sendFailure
+	}
 	id, err := w.sender.SendText(ctx, to, text)
 	if w.afterSend != nil {
 		w.afterSend()
@@ -166,5 +190,75 @@ func TestSendTextHistorySaveFailureDoesNotResend(t *testing.T) {
 	}
 	if sender.protoCalls != 1 || reconnects != 0 {
 		t.Fatalf("send calls=%d reconnects=%d", sender.protoCalls, reconnects)
+	}
+}
+
+func TestSuccessfulReplyClearsOnlyPreDispatchInbound(t *testing.T) {
+	for _, tc := range []struct {
+		name                      string
+		newer, preserve, failSave bool
+		want                      int
+	}{
+		{name: "handled", want: 0}, {name: "new same-second arrival", newer: true, want: 1},
+		{name: "explicit preserve", preserve: true, want: 1}, {name: "save failure", failSave: true, want: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openSendTestDB(t)
+			to := types.NewJID("15550000001", types.DefaultUserServer)
+			at := time.Now().UTC().Truncate(time.Second)
+			if err := db.UpsertChat(to.String(), "dm", "Fixture", at); err != nil {
+				t.Fatal(err)
+			}
+			insert := func(id string) {
+				t.Helper()
+				if err := db.UpsertMessage(store.UpsertMessageParams{ChatJID: to.String(), MsgID: id, Timestamp: at, Text: "inbound"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			insert("before")
+			if err := db.TrackLiveUnread(to.String(), "before"); err != nil {
+				t.Fatal(err)
+			}
+			sender := &recordingTextSender{}
+			transport := &historyTextWA{sender: sender, afterSend: func() {
+				if tc.newer {
+					insert("after")
+					if err := db.TrackLiveUnread(to.String(), "after"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if tc.failSave {
+					db.Close()
+				}
+			}}
+			a := &fakeSendFileApp{wa: transport, db: db}
+			id, warning, err := sendTextWithHistory(context.Background(), a, nil, to, "reply", "", "", nil, nil, textEphemeralOptions{}, textSendOptions{preserveUnread: tc.preserve, handledThrough: "before"})
+			if err != nil || id == "" {
+				t.Fatalf("id=%q warning=%v err=%v", id, warning, err)
+			}
+			if tc.failSave {
+				if warning == nil {
+					t.Fatal("accepted save failure must be a warning")
+				}
+				return
+			}
+			if warning != nil {
+				t.Fatal(warning)
+			}
+			chat, err := db.GetChat(to.String())
+			if err != nil || chat.UnreadCount != tc.want || chat.Unread != (tc.want > 0) {
+				t.Fatalf("chat=%+v err=%v want count %d", chat, err, tc.want)
+			}
+			// Re-saving an outgoing echo must not acknowledge later unanswered input.
+			if tc.newer {
+				if err := persistOutboundTextWith(context.Background(), db, transport, to, string(id), "reply", time.Now()); err != nil {
+					t.Fatal(err)
+				}
+				chat, _ = db.GetChat(to.String())
+				if chat.UnreadCount != 1 {
+					t.Fatal("echo cleared newer inbound")
+				}
+			}
+		})
 	}
 }

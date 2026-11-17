@@ -125,7 +125,7 @@ func readReceiptBatches(msgs []store.MessageInfo, isGroup bool) ([]readReceiptBa
 
 // MarkChatReadSelfThrough privately acknowledges a fixed inbound history range.
 // It never enters collection recovery. Partial network success keeps all local
-// state unchanged; retrying previously sent read-self receipts is idempotent.
+// state unchanged. Durable attempts prevent repeating an uncertain dispatch.
 func (a *App) MarkChatReadSelfThrough(ctx context.Context, jid types.JID, id string) (int, types.ReceiptType, error) {
 	if strings.TrimSpace(id) == "" || id != strings.TrimSpace(id) {
 		return 0, "", fmt.Errorf("--through-message-id requires an exact nonempty message ID")
@@ -138,6 +138,13 @@ func (a *App) MarkChatReadSelfThrough(ctx context.Context, jid types.JID, id str
 	if len(msgs) == 0 {
 		// A marker-only chat with newer readable messages must remain pending.
 		// Nothing was sent, so omit the receipt type rather than claim dispatch.
+		return 0, "", nil
+	}
+	msgs, err = a.db.UnattemptedPrivateReadMessages(msgs)
+	if err != nil {
+		return 0, "", err
+	}
+	if len(msgs) == 0 {
 		return 0, "", nil
 	}
 	isGroup := jid.Server == types.GroupServer
@@ -162,6 +169,15 @@ func (a *App) MarkChatReadSelfThrough(ctx context.Context, jid types.JID, id str
 		// covering the entire snapshot even when the unread counter is stale.
 		for start := 0; start < len(batch.ids); start += maxReadReceiptMessages {
 			ids := batch.ids[start:min(start+maxReadReceiptMessages, len(batch.ids))]
+			// Persist the exact attempted IDs before a socket write can echo.
+			// The final explicit completion, not its echo, owns local settlement.
+			guardIDs := make([]string, len(ids))
+			for i, id := range ids {
+				guardIDs[i] = string(id)
+			}
+			if err := a.db.RecordPrivateReadAttempt(chatJID, guardIDs); err != nil {
+				return sent, types.ReceiptTypeReadSelf, err
+			}
 			if err := a.wa.MarkReadSelf(ctx, ids, nowUTC(), jid, batch.sender, addressing); err != nil {
 				return sent, types.ReceiptTypeReadSelf, fmt.Errorf("send private read-self receipts (%d already sent): %w", sent, err)
 			}
@@ -173,6 +189,9 @@ func (a *App) MarkChatReadSelfThrough(ctx context.Context, jid types.JID, id str
 	boundary := msgs[len(msgs)-1]
 	if err := a.db.ClearChatUnreadThroughPreservingMarker(chatJID, boundary.Timestamp, []string{id}); err != nil {
 		return sent, types.ReceiptTypeReadSelf, fmt.Errorf("private receipts sent, but updating local unread state failed: %w", err)
+	}
+	if err := a.db.CompletePrivateReadMessages(chatJID, msgs); err != nil {
+		return sent, types.ReceiptTypeReadSelf, fmt.Errorf("private receipts sent; completion evidence unavailable: %w", err)
 	}
 	return sent, types.ReceiptTypeReadSelf, nil
 }

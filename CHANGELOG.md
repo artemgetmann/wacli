@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Send: require an explicit answered inbound boundary for private text-reply acknowledgement; freeze exact known live unread IDs before sending, preserve later arrivals, and retain durable no-retry/echo guards. Unknown or manual unread state stays pending. Desktop/iPhone acceptance remains separate from socket dispatch and local settlement.
+
 - Sync: retain verified pending chat-state evidence across credential deletion and validate same-account replacement epochs without clearing history. Refuse ambiguous or uncovered retired work. Writable auth status now retains the store lock; offline doctor avoids draining pending updates and retains the lock for App migrations. Delayed starring callback ordering remains outside the covered guarantee.
 
 - Sync: retain verified chat-state updates through an atomic local projection/checkpoint handoff, replay pending updates on startup, and report incomplete local persistence separately from request acceptance. Preserve newer unread state and existing uncovered-feature recovery.

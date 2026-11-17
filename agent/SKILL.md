@@ -28,12 +28,15 @@ activity materially changes the approved response, obtain approval for revised
 wording. Pass exact payload as a UTF-8 file/stdin; do not interpolate it in shell
 code or use escape rewriting.
 
-Reads, summaries, and drafts preserve unread state. Safe-send defaults to
-`--read-policy preserve`. Only if all requests through a known inbound snapshot
+Reads, summaries, drafts and text sends without explicit handled scope preserve
+unread state. Only if all requests through a known inbound snapshot
 are resolved, add `--read-policy handled --handled-through <message-id>`.
 Partial answers, unavailable voice notes, and new inbound remain pending.
 Handled state uses private `read-self` updates with an exact inbound boundary;
 it does not change account privacy settings or wait for app-state recovery.
+Text sends capture pending IDs in the same owner before dispatch. Unknown legacy
+counts or manual markers defer acknowledgement; do not add a second mark-read
+command to override that outcome. Private attempts are never automatically retried.
 Do not use sender-facing `--receipts` to implement handled state.
 
 Transport acceptance, local verification, visible quote rendering, recipient

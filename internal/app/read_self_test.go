@@ -186,13 +186,58 @@ func TestReadSelfThroughGroupBatchesAndPartialFailurePreserveLocalState(t *testi
 	if required, err := a.db.AppStateRecoveryRequired(string(appstate.WAPatchRegularLow)); err != nil || !required {
 		t.Fatalf("partial dispatch changed recovery marker: %v %v", required, err)
 	}
-	// A retry can safely resend the private first batch and finish the same range.
+	// An uncertain partial dispatch stays consumed. Neither a new command nor
+	// a reopened owner may automatically repeat its successful first batch.
 	f.onReadReceipt = nil
-	if n, kind, err := a.MarkChatReadSelfThrough(context.Background(), chat, "b"); err != nil || n != 2 || kind != types.ReceiptTypeReadSelf {
-		t.Fatalf("retry=%d %s %v", n, kind, err)
+	if n, _, err := a.MarkChatReadSelfThrough(context.Background(), chat, "b"); err == nil || n != 0 || len(f.readSelfCalls) != 2 {
+		t.Fatalf("uncertain dispatch was repeated: retry=%d calls=%d error=%v", n, len(f.readSelfCalls), err)
 	}
 	stored, err = a.db.GetChat(chat.String())
-	if err != nil || stored.UnreadCount != 0 || stored.Unread {
-		t.Fatalf("successful retry did not clear handled range: %+v %v", stored, err)
+	if err != nil || stored.UnreadCount != 1 || !stored.Unread {
+		t.Fatalf("refused retry discarded pending work: %+v %v", stored, err)
+	}
+}
+
+func TestReadSelfSuccessiveBoundariesSkipCompletedIDs(t *testing.T) {
+	for _, reopen := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reopen=%t", reopen), func(t *testing.T) {
+			a := newTestApp(t)
+			f := newFakeWA()
+			a.wa = f
+			chat := types.NewJID("456", types.DefaultUserServer)
+			seedReceiptChat(t, a, chat, "dm", []store.UpsertMessageParams{{MsgID: "A", SenderJID: chat.String()}}, 1)
+			if n, _, err := a.MarkChatReadSelfThrough(t.Context(), chat, "A"); err != nil || n != 1 {
+				t.Fatalf("first boundary=%d %v", n, err)
+			}
+			if reopen {
+				dir := a.opts.StoreDir
+				a.Close()
+				var err error
+				a, err = New(Options{StoreDir: dir})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(a.Close)
+				f = newFakeWA()
+				a.wa = f
+			}
+			before := len(f.readSelfCalls)
+			if err := a.db.UpsertMessage(store.UpsertMessageParams{ChatJID: chat.String(), MsgID: "B", SenderJID: chat.String(), Timestamp: time.Now(), Text: "new pending"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.db.IncrementChatUnread(chat.String()); err != nil {
+				t.Fatal(err)
+			}
+			if n, kind, err := a.MarkChatReadSelfThrough(t.Context(), chat, "B"); err != nil || n != 1 || kind != types.ReceiptTypeReadSelf {
+				t.Fatalf("next boundary=%d %s %v", n, kind, err)
+			}
+			if len(f.readSelfCalls) != before+1 || !slices.Equal(f.readSelfCalls[before].ids, []types.MessageID{"B"}) {
+				t.Fatalf("completed A repeated or B blocked: %+v", f.readSelfCalls)
+			}
+			state, err := a.db.GetChat(chat.String())
+			if err != nil || state.Unread || state.UnreadCount != 0 {
+				t.Fatalf("next boundary not settled: %+v %v", state, err)
+			}
+		})
 	}
 }

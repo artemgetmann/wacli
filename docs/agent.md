@@ -49,19 +49,40 @@ the exact chat/message ID against read-only history. Attachments require a
 matching plaintext hash, media type and caption; caption alone is not proof.
 It uses upstream daemon delegation and does not routinely stop the sync owner.
 
-Default `--read-policy preserve` leaves the conversation pending. Only when all
-requests through a known snapshot have been handled, use:
+Text replies preserve unread unless the caller supplies the exact answered
+inbound boundary. A quote or latest-at-send lookup does not prove what was
+handled. Use `--read-policy preserve` for partial answers or unknown scope.
+Only when every request through a known input snapshot has been answered, use:
 
 ```sh
 wacli agent send-text --to 15551234567@s.whatsapp.net --message-file /private/approved.txt --read-policy handled --handled-through INBOUND_ID --json
 ```
 
-This delegates `chats mark-read --self-only --through-message-id`; wrong/missing IDs fail
-instead of selecting whichever message arrived most recently. Newer inbound
-must remain pending. Internal `read-self` receipts update your own linked devices
-without sending blue-tick read receipts to contacts or changing account privacy
-settings. This path does not wait for app-state recovery. Exact device behavior
-is a live acceptance check; a successful dispatch alone is not device proof.
+For text, the same owner captures known pending message IDs before sending,
+then dispatches only those IDs using explicit private `read-self` after send
+acceptance and local save. It never uses ordinary receipts or app-state recovery.
+The `reply` policy accepts the same explicit boundary; without it unread stays
+pending. Raw text exposes `--handled-through ID` and `--preserve-unread`.
+The new `text_handled_reply` delegate kind makes older owners reject before
+sending instead of ignoring scope. File sends retain their preserve default.
+
+App migration36 tracks exact new live unread membership and durable attempt
+guards. Legacy counts, manual markers, conflicting projections and ambiguous
+history defer acknowledgement; they are never reconstructed from a history
+suffix. A known read/zero baseline followed by new live input can establish
+membership. Captured IDs exclude later arrivals even when timestamps are older.
+Receipt and app-state echoes of private attempts cannot broaden local settlement
+after partial failure, restart or phone/LID reconciliation. Ambiguous echoed
+reads can conservatively leave the CLI pending even if another device was read.
+Explicit user mark-read commands remain available.
+
+`local_read` and agent `readState` separate `dispatched`, `uncertain`, `deferred`
+and local-settlement outcomes. Dispatch proves a socket write, not server
+acceptance or a Desktop/iPhone badge change. A durable attempt is never retried,
+including after restart; completed old IDs are skipped when an explicit private
+read progresses to new input. Never resend the accepted reply to repair read state.
+Device behavior and preservation of concurrent remote unread require controlled
+live acceptance. `device_verified` remains false until separately observed.
 
 JSON keeps transport acceptance (`send.accepted`), `verification`, `quote`,
 and `readState` separate. `verified_local_metadata` does not prove recipient
