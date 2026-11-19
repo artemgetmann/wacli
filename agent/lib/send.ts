@@ -4,17 +4,17 @@ import { randomUUID, createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { defaultStore, envelope, exactText, parseFlags, runWacli, sleep } from "./runtime.ts";
 import type { Runner } from "./runtime.ts";
-import { ensureOwner, parseArgs as parseOwnerArgs } from "./owner/live.ts";
+import { inspectSendOwner, parseArgs as parseOwnerArgs } from "./owner/live.ts";
 
-type ReadyOwner = { sendReady?: boolean; message?: string };
+type ReadyOwner = { direct?: boolean; sendReady?: boolean; message?: string };
 type PrepareOwner = (store: string, timeoutMs: number) => Promise<ReadyOwner>;
 
 // Connection alone can precede the local send server during startup recovery.
 // Use the same owner helper directly, with its existing bounded settle limit.
 const prepareSendOwner: PrepareOwner = (store, timeoutMs) => {
-  const flags = parseOwnerArgs(["ensure", "--store", store]);
+  const flags = parseOwnerArgs(["status", "--store", store]);
   flags.settleMs = Math.min(flags.settleMs, timeoutMs);
-  return ensureOwner(flags);
+  return inspectSendOwner(flags);
 };
 
 // Keep the existing per-store operation lock during migration: old authored
@@ -134,7 +134,7 @@ export async function safeSend(kind: "text" | "file", argv: string[], runner: Ru
     const readyStarted = performance.now();
     const owner = await prepareOwner(store, timeout);
     timings.ownerReadyMs = performance.now() - readyStarted;
-    if (owner.sendReady !== true) throw new Error(`WhatsApp send owner is not ready; nothing was dispatched. ${owner.message || "Check owner readiness before retrying."}`);
+    if (!owner.direct && owner.sendReady !== true) throw new Error(`WhatsApp send owner is not ready; nothing was dispatched. ${owner.message || "Check owner readiness before retrying."}`);
     const args = ["--store", store, "--timeout", `${timeout}ms`, "send", kind, "--to", to, "--json"];
     if (kind === "text") {
       args.push("--message", text);
