@@ -25,8 +25,12 @@ Never send without explicit current-chat recipient/payload authority.
 Use one narrow final conversation/account/recipient check immediately before an
 authorized send; reuse that check within the same dispatch boundary. If new
 activity materially changes the approved response, obtain approval for revised
-wording. Pass exact payload as a UTF-8 file/stdin; do not interpolate it in shell
-code or use escape rewriting.
+wording. Pass the approved text as exact UTF-8 bytes. For a single-line reply,
+write the file without a trailing newline (for example, Python
+`Path.write_bytes(approved_text.encode("utf-8"))`). Check those bytes against
+the approved text before sending. Keep intentional line breaks. A shell
+here-document or `echo` normally adds a newline; do not use either for a
+single-line payload. Never interpolate message content in shell code.
 
 Reads, summaries and drafts preserve unread. With an approved text reply,
 pass `--handled-through <message-id>` for the last incoming message you showed
