@@ -116,7 +116,14 @@ func (d *DB) SnapshotHandledUnread(jid, throughID string) (*HandledUnreadSnapsho
 	if count <= 0 || count != known {
 		return nil, fmt.Errorf("unread membership is unknown or ambiguous")
 	}
-	rows, err := tx.Query(`SELECT rowid,msg_id,COALESCE(sender_jid,''),ts FROM messages WHERE `+selfReceiptEligible+` AND rowid<=? AND msg_id IN (SELECT msg_id FROM inbound_read_state WHERE chat_jid=? AND pending=1) ORDER BY rowid`, jid, anchor, jid)
+	// Message insertion and first readable arrival can differ for an encrypted
+	// placeholder. Bound both orders. Without an anchor in the unread ledger
+	// the readable prefix is unknown, so the subquery selects nothing.
+	rows, err := tx.Query(`SELECT rowid,msg_id,COALESCE(sender_jid,''),ts FROM messages
+ WHERE `+selfReceiptEligible+` AND rowid<=? AND msg_id IN (
+   SELECT msg_id FROM inbound_read_state WHERE chat_jid=? AND pending=1
+   AND rowid <= (SELECT rowid FROM inbound_read_state WHERE chat_jid=? AND msg_id=?)
+ ) ORDER BY rowid`, jid, anchor, jid, jid, throughID)
 	if err != nil {
 		return nil, err
 	}

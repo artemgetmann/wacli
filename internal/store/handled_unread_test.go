@@ -420,3 +420,34 @@ func TestPrivateAttemptHistoryUsesMessageIndex(t *testing.T) {
 		t.Fatalf("unindexed lookup: %s", plan)
 	}
 }
+
+func TestHandledBoundaryPreservesMessageDecodedAfterReview(t *testing.T) {
+	d := openTestDB(t)
+	if err := d.UpsertChat(handledTestChat, "dm", "synthetic", time.Unix(99, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpsertMessage(UpsertMessageParams{ChatJID: handledTestChat, MsgID: "placeholder", SenderJID: handledTestChat, Timestamp: time.Unix(99, 0)}); err != nil {
+		t.Fatal(err)
+	}
+	handledInbound(t, d, "reviewed", 100, true)
+	// The delayed payload updates the old message row but only now becomes unread.
+	handledInbound(t, d, "placeholder", 99, true)
+	snap, err := d.SnapshotHandledUnread(handledTestChat, "reviewed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Messages) != 1 || snap.Messages[0].MsgID != "reviewed" {
+		t.Fatalf("acknowledgment crossed review boundary: %v", snap.Messages)
+	}
+	if err := d.ClaimHandledUnread(snap); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := d.SettleHandledUnread(snap); err != nil || !ok {
+		t.Fatalf("settlement: %t %v", ok, err)
+	}
+	handledCount(t, d, 1)
+	next, err := d.SnapshotHandledUnread(handledTestChat, "placeholder")
+	if err != nil || len(next.Messages) != 1 || next.Messages[0].MsgID != "placeholder" {
+		t.Fatalf("decoded content not pending: %v %v", next, err)
+	}
+}
