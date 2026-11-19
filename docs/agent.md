@@ -42,6 +42,10 @@ the matched process. Safe sends wait within the existing owner startup limit
 before dispatching; an unready owner means nothing was sent. IPC binds before
 unrelated app-state recovery, and invalid long socket paths fail setup early.
 
+During managed startup, sync appends its run marker and publishes its owner
+record after acquiring the store lock. A rejected contender can log its
+startup error while preserving the existing record and marker.
+
 ## Sends and pending work
 
 The safe path requests upstream JSON receipts, dispatches once, and reconciles

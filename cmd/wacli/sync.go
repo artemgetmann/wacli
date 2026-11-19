@@ -74,6 +74,11 @@ func newSyncCmd(flags *rootFlags) *cobra.Command {
 			}
 			defer closeApp(a, lk)
 
+			if ownerLog := os.Getenv(agentOwnerLogEnv); ownerLog != "" && follow && !once && flags.events {
+				if err := publishAgentSyncOwner(a.StoreDir(), ownerLog); err != nil {
+					return fmt.Errorf("publish sync owner: %w", err)
+				}
+			}
 			if err := a.EnsureAuthed(ctx); err != nil {
 				return err
 			}

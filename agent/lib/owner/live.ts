@@ -198,10 +198,6 @@ async function readPidFile(pidPath: string): Promise<OwnerPidFile | undefined> {
   }
 }
 
-async function writePidFile(pidPath: string, payload: OwnerPidFile) {
-  await fsp.writeFile(pidPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-}
-
 async function readLockInfo(storeDir: string): Promise<{ raw?: string; pid?: number }> {
   try {
     const raw = (await fsp.readFile(path.join(storeDir, "LOCK"), "utf8")).trim();
@@ -546,29 +542,26 @@ async function startOwner(flags: Flags, files: OwnerFiles): Promise<void> {
   const logHandle = await fsp.open(files.logPath, "a", 0o600);
   try {
     const stat = await logHandle.stat();
-    const runId = randomUUID();
-    // The marker survives ordinary append and rejects same-inode truncation
-    // that would otherwise let a later run inherit this run's byte offset.
-    await logHandle.write(`${JSON.stringify({ agentOwnerRun: runId })}\n`);
     const command = [process.env.WACLI_AGENT_BINARY || "wacli", "--store", flags.storeDir, "sync", "--follow", "--events"];
+    // Pass the identity of the inherited log descriptor to the child. Only
+    // the sync that acquires LOCK may append a run marker and publish its PID.
     const child = spawn(command[0], command.slice(1), {
       detached: true,
       stdio: ["ignore", logHandle.fd, logHandle.fd],
-      env: process.env,
+      env: {
+        ...process.env,
+        WACLI_AGENT_OWNER_LOG: JSON.stringify({
+          runId: randomUUID(),
+          logDev: stat.dev,
+          logIno: stat.ino,
+        }),
+      },
+    });
+    await new Promise<void>((resolve, reject) => {
+      child.once("spawn", resolve);
+      child.once("error", reject);
     });
     child.unref();
-
-    await writePidFile(files.pidPath, {
-      pid: child.pid ?? -1,
-      startedAt: new Date().toISOString(),
-      storeDir: flags.storeDir,
-      command,
-      host: os.hostname(),
-      runId,
-      logDev: stat.dev,
-      logIno: stat.ino,
-      logStartOffset: stat.size,
-    });
   } finally {
     await logHandle.close();
   }
