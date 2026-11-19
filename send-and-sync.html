@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>What happens when you press Send? · PR #28</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f6f5ee;color:#182c2a;font:16px/1.45 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1080px;margin:0 auto;padding:32px 34px}header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #bec8bb;padding-bottom:12px}header a{color:#225952;font-weight:650}header span,.label,small{font:600 12px/1.4 ui-monospace,monospace;letter-spacing:.05em}h1{font:550 clamp(32px,5vw,55px)/1.05 Georgia,serif;letter-spacing:-.045em;margin:28px 0 10px}p{margin:0}nav{display:flex;flex-wrap:wrap;gap:7px;margin:22px 0}button{font:inherit;font-size:14px;background:transparent;color:inherit;border:1px solid #aab9af;border-radius:22px;padding:8px 16px;cursor:pointer}button[aria-pressed=true]{background:#183e39;color:white;border-color:#183e39}button:focus-visible{outline:3px solid #407cba;outline-offset:3px}.row{border:1px solid #ccd3c8;background:#fffef9;border-radius:12px;padding:17px 21px;margin-bottom:10px}.new{background:#e9f3e8;border-color:#a9c8b3}.label{display:block;color:#485c55;margin-bottom:12px}.steps{display:grid;grid-template-columns:1fr 1fr 1.1fr;gap:26px}.step{position:relative;border-top:2px solid #b8c2b9;padding-top:11px}.step:before{content:'';position:absolute;top:-5px;left:0;width:8px;height:8px;border-radius:100%;background:#425952}.new .step:before{background:#14644b}.step b{display:block;font-size:18px;margin-top:2px}.step small{color:#50615b}.result{color:#164e3e}.note{padding:14px 0;font-size:16px}.proof{border-top:1px solid #c0cabe;padding:12px 0;color:#53605a;font-size:13px}@media(max-width:620px){main{padding:18px}.steps{grid-template-columns:1fr;gap:12px}.step{padding:0 0 0 14px;border-top:0;border-left:2px solid #aebdb1}.step:before{top:5px;left:-5px}h1{margin-top:20px}.row{padding:16px}.label{margin-bottom:9px}}
+</style>
+<main><header><span>WACLI / SEND BEHAVIOR</span><a href="https://github.com/artemgetmann/wacli/pull/28">PR #28 ↗</a></header>
+<h1>What happens when you press Send?</h1>
+<p>Choose the state of WhatsApp sync when you press the button.</p>
+<nav aria-label="Sync state"></nav><section aria-live="polite" id="comparison"></section>
+<p class="proof">Offline test with the packaged app. The test process refused every local send request. Delivery to WhatsApp and reconnecting a signed-in account remain unverified.</p></main>
+<script>
+const scenarios=[
+  {name:"Slow reconnect", before:[["0 seconds","Press Send"],["5 seconds","Stop sync and restart it"],["Result","No send request"]],after:[["0 seconds","Press Send"],["7 seconds","The same sync recovers"],["7.18 seconds","One send request"]],note:"The test scheduled recovery for seven seconds. Restarting at five seconds interrupted it."},
+  {name:"Already ready",before:[["Start","Press Send"],["Sync is ready","Use the running process"],["Result","One send request"]],note:"A healthy connection follows the same path in both versions."},
+  {name:"Stays stuck",before:[["Start","Press Send"],["After a short wait","Restart the running sync"],["In this offline test","No send request"]],after:[["Start","Press Send"],["Until the wait expires","Give sync time to recover"],["Result","Exit without sending"]],note:"The proposed version leaves sync running. If it needs a restart, you can request repair explicitly with wacli agent live ensure."},
+  {name:"Sync is missing",before:[["Start","Press Send"],["No running sync","Start sync automatically"],["In the empty test store","Sign-in required"]],note:"Both versions start a missing sync. The test store had no account, so neither version made a send request."}
+];
+const nav=document.querySelector("nav"), view=document.querySelector("#comparison");
+function row(title,steps,cls){return '<div class="row '+cls+'"><span class="label">'+title+'</span><div class="steps">'+steps.map(([time,action],i)=>'<div class="step"><small>'+time+'</small><b class="'+(i===2?'result':'')+'">'+action+'</b></div>').join('')+'</div></div>'}
+function show(i){const s=scenarios[i];[...nav.children].forEach((b,j)=>b.setAttribute("aria-pressed",String(i===j)));view.innerHTML=row("BEFORE · EXISTING BEHAVIOR",s.before,"")+row("AFTER · PROPOSED IN #28",s.after||s.before,"new")+'<p class="note">'+s.note+'</p>'}
+scenarios.forEach((s,i)=>{const b=document.createElement("button");b.textContent=s.name;b.onclick=()=>show(i);nav.append(b)});show(0);
+</script></html>
