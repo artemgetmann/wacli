@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Agent live: publish the owner record and run marker after the sync acquires the store lock, so rejected contenders cannot replace ownership evidence.
+
 - Sync: retain verified pending chat-state evidence across credential deletion and validate same-account replacement epochs without clearing history. Refuse ambiguous or uncovered retired work. Writable auth status now retains the store lock; offline doctor avoids draining pending updates and retains the lock for App migrations. Delayed starring callback ordering remains outside the covered guarantee.
 
 - Sync: retain verified chat-state updates through an atomic local projection/checkpoint handoff, replay pending updates on startup, and report incomplete local persistence separately from request acceptance. Preserve newer unread state and existing uncovered-feature recovery.
