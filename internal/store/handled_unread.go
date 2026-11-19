@@ -21,10 +21,16 @@ func migrateInboundReadState(d *DB) error {
 	// Missing completion evidence stays uncertain, never inferred from a count.
 	var has bool
 	err = d.sql.QueryRow(`SELECT EXISTS(SELECT 1 FROM pragma_table_info('inbound_read_state') WHERE name='completed')`).Scan(&has)
-	if err != nil || has {
+	if err != nil {
 		return err
 	}
-	_, err = d.sql.Exec(`ALTER TABLE inbound_read_state ADD COLUMN completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0,1))`)
+	if !has {
+		_, err = d.sql.Exec(`ALTER TABLE inbound_read_state ADD COLUMN completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0,1))`)
+		if err != nil {
+			return err
+		}
+	}
+	_, err = d.sql.Exec(`CREATE INDEX IF NOT EXISTS idx_private_attempt_by_id ON inbound_read_state(msg_id,completed) WHERE attempted=1`)
 	return err
 }
 
@@ -236,6 +242,8 @@ func (d *DB) SettleHandledUnread(s *HandledUnreadSnapshot) (bool, error) {
 	return true, nil
 }
 
+const privateAttemptsByID = `SELECT COUNT(*),COALESCE(SUM(CASE WHEN completed=0 THEN 1 ELSE 0 END),0) FROM inbound_read_state WHERE msg_id=? AND attempted=1`
+
 // UnattemptedPrivateReadMessages lets an explicit prefix read progress to new
 // IDs without repeating successful old receipts. An uncertain attempt blocks
 // the operation: it is never silently classified as completed or retried.
@@ -243,7 +251,7 @@ func (d *DB) UnattemptedPrivateReadMessages(messages []MessageInfo) ([]MessageIn
 	var result []MessageInfo
 	for _, message := range messages {
 		var attempted, uncertain int
-		if err := d.sql.QueryRow(`SELECT COUNT(*),COALESCE(SUM(CASE WHEN completed=0 THEN 1 ELSE 0 END),0) FROM inbound_read_state WHERE msg_id=? AND attempted=1`, message.MsgID).Scan(&attempted, &uncertain); err != nil {
+		if err := d.sql.QueryRow(privateAttemptsByID, message.MsgID).Scan(&attempted, &uncertain); err != nil {
 			return nil, err
 		}
 		if uncertain > 0 {

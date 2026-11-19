@@ -157,14 +157,14 @@ export async function safeSend(kind: "text" | "file", argv: string[], runner: Ru
     const id = typeof data?.id === "string" ? data.id : undefined;
     let verification: any = { status: "unverified", reason: "No structured exact send receipt; dispatch may be uncertain" };
     let readState: any = { status: "not_attempted", policy, reason: "Conversation remains pending" };
-    if (kind === "text" && policy !== "preserve" && accepted) readState = {
+    if (kind === "text" && policy !== "preserve") readState = {
       status: data?.local_read?.status || "unverified", policy,
       throughMessageId: data?.local_read?.through_message_id,
       deviceVerified: false,
       receiptType: data?.local_read?.receipt_type,
       receipts: data?.local_read?.receipts,
       warning: data?.local_read?.warning,
-      reason: data?.local_read ? undefined : "Owner did not report bounded local unread completion",
+      reason: data?.local_read ? undefined : "Owner did not confirm the unread outcome after dispatch",
     };
     const verifyStart = performance.now();
     if (accepted && chat && id) {

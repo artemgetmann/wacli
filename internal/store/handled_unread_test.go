@@ -2,6 +2,7 @@ package store
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -406,4 +407,16 @@ func TestPrivateReadAliasMigrationRetainsCoarseEchoGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	handledCount(t, d, 1)
+}
+
+func TestPrivateAttemptHistoryUsesMessageIndex(t *testing.T) {
+	d := openTestDB(t)
+	var id, parent, unused int
+	var plan string
+	if err := d.sql.QueryRow("EXPLAIN QUERY PLAN "+privateAttemptsByID, "old-message").Scan(&id, &parent, &unused, &plan); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plan, "idx_private_attempt_by_id") || !strings.Contains(plan, "SEARCH") {
+		t.Fatalf("unindexed lookup: %s", plan)
+	}
 }

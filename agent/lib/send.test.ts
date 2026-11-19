@@ -33,7 +33,7 @@ test("readiness completes before exactly one uncertain send attempt", async () =
     const result = await productionSafeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello", "--handled-through", "REVIEWED", "--settle-ms", "0"], async () => { events.push("send"); return { ok: false, exitCode: null, timedOut: true, stdout: "", stderr: "unknown outcome" }; }, async () => { events.push("ready"); return { sendReady: true }; });
     assert.deepEqual(events, ["ready", "send"]);
     assert.equal(result.retryAttempted, false);
-    assert.equal(result.readState.status, "not_attempted");
+    assert.equal(result.readState.status, "unverified");
     assert.ok(result.timings.ownerReadyMs >= 0);
   } finally { await f.close(); }
 });
@@ -138,8 +138,7 @@ test("store warning and malformed/post-dispatch receipts do not trigger read or 
       const result = await safeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello", "--read-policy", "handled", "--handled-through", "OLD", "--settle-ms", "0"], async () => { calls++; return raw; });
       assert.equal(calls, 1);
       assert.equal(result.verification.status, "unverified");
-      const parsed = raw.stdout.startsWith("{") ? JSON.parse(raw.stdout) : undefined;
-      assert.equal(result.readState.status, parsed?.data?.sent === true ? "unverified" : "not_attempted");
+      assert.equal(result.readState.status, "unverified");
     }
   } finally { await f.close(); }
 });
@@ -199,4 +198,18 @@ test("ordinary agent reply without a reviewed ID stops before sending", async ()
   let sends = 0;
   await assert.rejects(safeSend("text", ["--to", chat, "--message", "hello"], async () => { sends++; return accepted(); }), /Reply not sent: pass --handled-through/);
   assert.equal(sends, 0);
+});
+
+test("lost response after owner-side settlement leaves unread outcome unverified", async () => {
+  const f = await fixture();
+  try {
+    let ownerSettled = false;
+    const result = await safeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello", "--handled-through", "BOUNDARY"], async () => {
+      ownerSettled = true;
+      return { ok: false, exitCode: null, stdout: "", stderr: "response lost", timedOut: true };
+    });
+    assert.ok(ownerSettled);
+    assert.equal(result.readState.status, "unverified");
+    assert.equal(result.retryAttempted, false);
+  } finally { await f.close(); }
 });
