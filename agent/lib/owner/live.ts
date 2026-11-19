@@ -50,6 +50,7 @@ export type LiveStatus = {
   ownerStartedAt?: string;
   ownerAgeMs?: number;
   ownerCommandMatches: boolean;
+  ownerIdentityUnknown?: boolean;
   lockInfo?: string;
   lockPid?: number;
   lockPidRunning?: boolean;
@@ -65,7 +66,7 @@ export type LiveStatus = {
   stopSignal?: "SIGINT" | "SIGKILL";
   forcedStop?: boolean;
   pidFileRemoved?: boolean;
-  stopReason?: "no_pid_file" | "not_running" | "stopped" | "forced_stop" | "pid_command_mismatch";
+  stopReason?: "no_pid_file" | "not_running" | "stopped" | "forced_stop" | "pid_command_mismatch" | "identity_unknown";
 };
 
 export type EnsureOwnerDeps = {
@@ -215,13 +216,19 @@ async function readLockInfo(storeDir: string): Promise<{ raw?: string; pid?: num
   }
 }
 
-function processExists(pid: number) {
+export function probeProcess(pid: number, signal: (pid: number, signal: 0) => unknown = process.kill): "alive" | "dead" | "unknown" {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return "unknown";
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
+    signal(pid, 0);
+    return "alive";
+  } catch (error: any) {
+    return error.code === "ESRCH" ? "dead" : "unknown";
   }
+}
+
+function processExists(pid: number) {
+  // Permission denial and other observation failures never establish absence.
+  return probeProcess(pid) !== "dead";
 }
 
 async function runShortCommand(
@@ -246,6 +253,10 @@ async function runShortCommand(
     });
     child.stderr.on("data", (chunk) => {
       stderr += String(chunk);
+    });
+    child.on("error", () => {
+      clearTimeout(timer);
+      resolve({ exitCode: null, stdout: "", stderr: "Process inspection unavailable" });
     });
     child.on("close", (exitCode) => {
       clearTimeout(timer);
@@ -279,7 +290,9 @@ export function commandLooksLikeExpectedOwner(
 }
 
 async function commandMatchesExpected(pid: number, storeDir: string, recordedExecutable?: string) {
-  const result = await runShortCommand("ps", ["-o", "command=", "-p", String(pid)], 1_500);
+  const result = await runShortCommand("ps", ["-o", "command=", "-p", String(pid)], 1_500)
+    .catch(() => ({exitCode: null, stdout: "", stderr: "Process inspection unavailable"}));
+  if (result.exitCode !== 0 || !result.stdout.trim()) return undefined;
   // Legacy records used bare wacli. The selected embedded binary is the exact
   // path in that case; new records retain the actual executable used to spawn.
   const executable = recordedExecutable && path.isAbsolute(recordedExecutable) &&
@@ -472,9 +485,12 @@ async function collectStatus(flags: Flags): Promise<LiveStatus> {
   const ownerAgeMs = Number.isFinite(parsedStartedAt)
     ? Math.max(0, Date.now() - parsedStartedAt)
     : undefined;
-  const ownerRunning = typeof ownerPid === "number" && ownerPid > 0 && processExists(ownerPid);
-  const ownerCommandMatches =
-    ownerRunning && ownerPid ? await commandMatchesExpected(ownerPid, flags.storeDir, pidFile?.command?.[0]) : false;
+  const ownerProbe = typeof ownerPid === "number" ? probeProcess(ownerPid) : "dead";
+  const ownerRunning = ownerProbe !== "dead";
+  const commandMatch = ownerProbe === "alive" && ownerPid
+    ? await commandMatchesExpected(ownerPid, flags.storeDir, pidFile?.command?.[0]) : false;
+  const ownerIdentityUnknown = ownerProbe === "unknown" || commandMatch === undefined;
+  const ownerCommandMatches = !ownerIdentityUnknown && commandMatch === true;
   const lockInfo = await readLockInfo(flags.storeDir);
   const lockPidRunning =
     typeof lockInfo.pid === "number" && lockInfo.pid > 0 ? processExists(lockInfo.pid) : undefined;
@@ -512,6 +528,8 @@ async function collectStatus(flags: Flags): Promise<LiveStatus> {
     message = "Wacli sync owner is connected, but send endpoint readiness is not confirmed.";
   } else if (ownerRunning && ownerCommandMatches) {
     message = "Wacli sync owner is running, but current-run connection is not confirmed.";
+  } else if (ownerIdentityUnknown) {
+    message = "Owner identity could not be established; existing ownership evidence is preserved.";
   } else if (ownerRunning) {
     message =
       "A process with the recorded PID is alive, but it no longer looks like wacli sync --follow.";
@@ -528,6 +546,7 @@ async function collectStatus(flags: Flags): Promise<LiveStatus> {
     ownerStartedAt,
     ownerAgeMs,
     ownerCommandMatches,
+    ownerIdentityUnknown,
     lockInfo: lockInfo.raw,
     lockPid: lockInfo.pid,
     lockPidRunning,
@@ -600,6 +619,10 @@ export async function ensureOwner(
   const files = resolveOwnerFiles(flags.storeDir);
 
   let initial = await deps.collectStatus(flags);
+  if (initial.ownerIdentityUnknown) {
+    initial.ok = false;
+    return initial;
+  }
   if (initial.sendReady) {
     return initial;
   }
@@ -658,7 +681,13 @@ export async function ensureOwner(
     // stopOwner re-checks the live process command immediately before signaling
     // it. That second check is essential: the PID can exit and be reused after
     // collectStatus, and a replacement process must never inherit our signal.
-    await deps.stopOwner(flags);
+    const stopped = await deps.stopOwner(flags);
+    // A failed identity recheck or a holder still exiting must not be followed
+    // by a competing startup that rewrites the preserved ownership evidence.
+    if (!stopped.ok || stopped.ownerIdentityUnknown || stopped.ownerRunning || stopped.lockPidRunning) {
+      stopped.ok = false;
+      return stopped;
+    }
   }
 
   await deps.startOwner(flags, files);
@@ -693,8 +722,22 @@ async function stopOwner(flags: Flags): Promise<LiveStatus> {
   let forcedStop = false;
   let stopReason: LiveStatus["stopReason"] = "no_pid_file";
 
+  if (ownerPid && probeProcess(ownerPid) === "unknown") {
+    const status = await collectStatus(flags);
+    status.ok = false;
+    status.stopReason = "identity_unknown";
+    status.message = "Cannot establish owner process identity; nothing was stopped or removed.";
+    return status;
+  }
   if (ownerPid && processExists(ownerPid)) {
     const matchesExpected = await commandMatchesExpected(ownerPid, flags.storeDir, pidFile?.command?.[0]);
+    if (matchesExpected === undefined) {
+      const status = await collectStatus(flags);
+      status.ok = false;
+      status.stopReason = "identity_unknown";
+      status.message = "Cannot inspect owner command; nothing was stopped or removed.";
+      return status;
+    }
     if (!matchesExpected) {
       await fsp.rm(files.pidPath, { force: true });
       const status = await collectStatus(flags);
@@ -731,24 +774,8 @@ async function stopOwner(flags: Flags): Promise<LiveStatus> {
     stopReason = "not_running";
   }
 
-  // The owner lock can lag behind the process exit. Give it a short window to
-  // disappear, then remove only stale locks that are definitely not live.
-  const lockDeadline = Date.now() + Math.min(flags.graceMs, 1_000);
-  for (;;) {
-    const lockInfo = await readLockInfo(flags.storeDir);
-    if (typeof lockInfo.pid !== "number") {
-      break;
-    }
-    const lockPidRunning = processExists(lockInfo.pid);
-    if (!lockPidRunning) {
-      await fsp.rm(path.join(flags.storeDir, "LOCK"), { force: true });
-      break;
-    }
-    if (Date.now() > lockDeadline) {
-      break;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
+  // The kernel releases flock when its holder exits. Keep the pathname and
+  // inode: unlinking it can let different processes lock different files.
 
   await fsp.rm(files.pidPath, { force: true });
   const status = await collectStatus(flags);
