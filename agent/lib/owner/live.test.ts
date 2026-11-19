@@ -10,6 +10,7 @@ import {
   logRunMarkerMatches,
   readLogTail,
   ensureOwner,
+  inspectSendOwner,
   probeSendReady,
   probeProcess,
 } from "./live.ts";
@@ -61,6 +62,29 @@ test("stale owner metadata cannot replace a live lock holder or rewrite its evid
     assert.match(result.message, /live process holds the store lock/);
     for (const [file, contents] of evidence) assert.equal(await fs.readFile(file, "utf8"), contents);
   } finally { await fs.rm(dir, {recursive: true, force: true}); }
+});
+
+test("send can use a short connection only when ownership evidence permits it", async () => {
+  const flags = {command: "status" as const, json: true, storeDir: "/unused",
+    settleMs: 7000, graceMs: 1, timeoutMs: 1, tailLines: 40};
+  const absent = {ok: true, action: flags.command, storeDir: flags.storeDir, pidFile: "", logFile: "",
+    ownerRunning: false, ownerCommandMatches: false, lockHeldByOwner: false, connected: false,
+    sendReady: false, logTail: [], message: ""};
+  for (const [evidence, direct] of [
+    [absent, true], [{...absent, lockPidRunning: true}, false],
+    [{...absent, ownerIdentityUnknown: true}, false], [{...absent, ownerRunning: true}, false],
+  ] as const) {
+    const result = await inspectSendOwner(flags, {collectStatus: async () => evidence,
+      now: () => 0, sleep: async () => { assert.fail("no owner to wait for"); }});
+    assert.equal(result.direct, direct);
+  }
+  let now = 0;
+  const result = await inspectSendOwner(flags, {collectStatus: async () => ({...absent,
+    ownerRunning: true, ownerCommandMatches: true, lockHeldByOwner: true,
+    lastLifecycleEvent: now < 7000 ? "reconnecting" : "connected", sendReady: now >= 7000}),
+    now: () => now, sleep: async ms => { now += ms; }});
+  assert.equal(result.sendReady, true);
+  assert.equal(now, 7000);
 });
 
 test("ensure waits for IPC readiness despite a connected owner without restarting", async () => {
