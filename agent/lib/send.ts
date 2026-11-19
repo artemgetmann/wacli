@@ -14,7 +14,7 @@ type PrepareOwner = (store: string, timeoutMs: number) => Promise<ReadyOwner>;
 const prepareSendOwner: PrepareOwner = (store, timeoutMs) => {
   const flags = parseOwnerArgs(["ensure", "--store", store]);
   flags.settleMs = Math.min(flags.settleMs, timeoutMs);
-  return ensureOwner(flags);
+  return ensureOwner({ ...flags, preserveRunningOwner: true });
 };
 
 // Keep the existing per-store operation lock during migration: old authored

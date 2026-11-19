@@ -47,7 +47,9 @@ unrelated app-state recovery, and invalid long socket paths fail setup early.
 The safe path requests upstream JSON receipts, dispatches once, and reconciles
 the exact chat/message ID against read-only history. Attachments require a
 matching plaintext hash, media type and caption; caption alone is not proof.
-It uses upstream daemon delegation and does not routinely stop the sync owner.
+It starts a missing sync owner and waits for a running owner to become ready.
+If that wait expires, the send exits before dispatch and leaves sync running.
+Use `wacli agent live ensure --json` for explicit connection recovery.
 
 Default `--read-policy preserve` leaves the conversation pending. Only when all
 requests through a known snapshot have been handled, use:
