@@ -241,3 +241,34 @@ func TestReadSelfSuccessiveBoundariesSkipCompletedIDs(t *testing.T) {
 		})
 	}
 }
+
+func TestReadSelfCompletedAnchorSettlesBackdatedNewInput(t *testing.T) {
+	a := newTestApp(t)
+	f := newFakeWA()
+	a.wa = f
+	chat := types.NewJID("456", types.DefaultUserServer)
+	seedReceiptChat(t, a, chat, "dm", []store.UpsertMessageParams{{MsgID: "A", SenderJID: chat.String()}}, 1)
+	anchor, err := a.db.ReadBoundary(chat.String(), "A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _, err := a.MarkChatReadSelfThrough(t.Context(), chat, "A"); err != nil || n != 1 {
+		t.Fatalf("first=%d %v", n, err)
+	}
+	if err = a.db.UpsertMessage(store.UpsertMessageParams{ChatJID: chat.String(), MsgID: "B", SenderJID: chat.String(), Timestamp: anchor.Timestamp.Add(-time.Minute), Text: "backdated"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = a.db.TrackLiveUnread(chat.String(), "B"); err != nil {
+		t.Fatal(err)
+	}
+	if n, _, err := a.MarkChatReadSelfThrough(t.Context(), chat, "A"); err != nil || n != 1 {
+		t.Fatalf("second=%d %v", n, err)
+	}
+	c, err := a.db.GetChat(chat.String())
+	if err != nil || c.UnreadCount != 0 || c.Unread {
+		t.Fatalf("backdated input permanently pending=%+v %v", c, err)
+	}
+	if len(f.readSelfCalls) != 2 || len(f.readSelfCalls[1].ids) != 1 || f.readSelfCalls[1].ids[0] != "B" {
+		t.Fatalf("unexpected receipts=%+v", f.readSelfCalls)
+	}
+}

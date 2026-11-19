@@ -110,6 +110,9 @@ export async function safeSend(kind: "text" | "file", argv: string[], runner: Ru
   if (kind === "file" && (flags["allow-self"] || flags["no-preview"])) throw new Error("--allow-self and --no-preview apply to text sends only");
   const policy = flags["read-policy"] || (kind === "text" ? "reply" : "preserve");
   if (!["reply", "preserve", "handled"].includes(String(policy))) throw new Error("--read-policy must be reply, preserve or handled");
+  if (kind === "text" && policy === "reply" && !String(flags["handled-through"] || "").trim()) {
+    throw new Error("Reply not sent: pass --handled-through with the last incoming message ID shown to the user. Use --read-policy preserve for an outbound message that should leave unread alone.");
+  }
   if (policy === "handled" && !flags["handled-through"]) throw new Error("Handled read state requires --handled-through");
   if (flags["handled-through"] && policy === "preserve") throw new Error("--handled-through cannot be combined with --read-policy preserve");
   if (flags["reply-to-sender"] && !flags["reply-to"]) throw new Error("--reply-to-sender requires --reply-to");

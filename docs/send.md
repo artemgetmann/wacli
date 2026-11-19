@@ -38,8 +38,7 @@ wacli polls list [--chat RECIPIENT] [--limit N] [--json]
 ## Replies and reactions
 
 Text sends preserve unread when the answered input is unknown. Supply
-`--handled-through INBOUND_ID` only when all requests through that exact input
-were answered; the owner captures pending IDs before dispatch and privately
+`--handled-through INBOUND_ID` for the last incoming message shown to the user when they approved the reply; the owner captures pending IDs before dispatch and privately
 acknowledges them after acceptance and local save. `--preserve-unread` explicitly
 disables this step. See [agent read-state boundaries](agent.md#sends-and-pending-work)
 for ambiguous history, durable attempts and the separate device proof boundary.

@@ -103,3 +103,55 @@ func TestHandledReplyGroupEchoFailureAndReopen(t *testing.T) {
 		})
 	}
 }
+
+func TestHandledReplyPreflightFailureDoesNotConsumeAttempt(t *testing.T) {
+	for _, invalidSender := range []bool{false, true} {
+		t.Run(fmt.Sprintf("invalid_sender=%t", invalidSender), func(t *testing.T) {
+			a := newTestApp(t)
+			f := newFakeWA()
+			a.wa = f
+			chat := types.NewJID("123", types.GroupServer)
+			sender := types.NewJID("111", types.DefaultUserServer)
+			if invalidSender {
+				sender = types.JID{}
+			} else {
+				f.groupInfoErr = fmt.Errorf("temporary group lookup failure")
+			}
+			if err := a.db.UpsertChat(chat.String(), "group", "synthetic", time.Unix(100, 0)); err != nil {
+				t.Fatal(err)
+			}
+			put := func(sender types.JID) {
+				t.Helper()
+				if err := a.db.UpsertMessage(store.UpsertMessageParams{ChatJID: chat.String(), MsgID: "shown", SenderJID: sender.String(), Timestamp: time.Unix(100, 0), Text: "shown"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			put(sender)
+			if err := a.db.TrackLiveUnread(chat.String(), "shown"); err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := a.db.SnapshotHandledUnread(chat.String(), "shown")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = CompleteHandledReply(t.Context(), a.db, f, chat, snapshot); err == nil {
+				t.Fatal("preflight failure hidden")
+			}
+			attempted, err := a.db.HasPrivateReadAttempt(chat.String(), []string{"shown"})
+			if err != nil || attempted || len(f.readSelfCalls) != 0 {
+				t.Fatalf("preflight consumed attempt: %v %v", attempted, err)
+			}
+			f.groupInfoErr = nil
+			f.groups[chat] = &types.GroupInfo{JID: chat}
+			put(types.NewJID("111", types.DefaultUserServer))
+			// Repeating completion after repair is safe because no receipt was attempted.
+			snapshot, err = a.db.SnapshotHandledUnread(chat.String(), "shown")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state, err := CompleteHandledReply(t.Context(), a.db, f, chat, snapshot); err != nil || state.Status != "dispatched" {
+				t.Fatalf("completion after repair=%+v %v", state, err)
+			}
+		})
+	}
+}

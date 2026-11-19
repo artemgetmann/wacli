@@ -28,10 +28,13 @@ activity materially changes the approved response, obtain approval for revised
 wording. Pass exact payload as a UTF-8 file/stdin; do not interpolate it in shell
 code or use escape rewriting.
 
-Reads, summaries, drafts and text sends without explicit handled scope preserve
-unread state. Only if all requests through a known inbound snapshot
-are resolved, add `--read-policy handled --handled-through <message-id>`.
-Partial answers, unavailable voice notes, and new inbound remain pending.
+Reads, summaries and drafts preserve unread. With an approved text reply,
+pass `--handled-through <message-id>` for the last incoming message you showed
+the user, even if the reply answers only some questions. Keep later input
+unread unless you show it to the user and they approve an updated reply.
+Recover a missing ID from the original pull. Never substitute the latest ID
+or use preserve merely to bypass the missing-ID error. For proactive messages
+or an explicit request to leave unread alone, use `--read-policy preserve`.
 Handled state uses private `read-self` updates with an exact inbound boundary;
 it does not change account privacy settings or wait for app-state recovery.
 Text sends capture pending IDs in the same owner before dispatch. Unknown legacy

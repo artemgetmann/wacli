@@ -49,10 +49,10 @@ the exact chat/message ID against read-only history. Attachments require a
 matching plaintext hash, media type and caption; caption alone is not proof.
 It uses upstream daemon delegation and does not routinely stop the sync owner.
 
-Text replies preserve unread unless the caller supplies the exact answered
-inbound boundary. A quote or latest-at-send lookup does not prove what was
-handled. Use `--read-policy preserve` for partial answers or unknown scope.
-Only when every request through a known input snapshot has been answered, use:
+Agent text replies require the ID of the last incoming message shown to the user
+when they approved the reply, even if they chose to answer only some questions.
+Omitting that ID stops the reply before sending. For proactive messages or an
+explicit request to leave unread alone, select `--read-policy preserve`.
 
 ```sh
 wacli agent send-text --to 15551234567@s.whatsapp.net --message-file /private/approved.txt --read-policy handled --handled-through INBOUND_ID --json
@@ -61,8 +61,7 @@ wacli agent send-text --to 15551234567@s.whatsapp.net --message-file /private/ap
 For text, the same owner captures known pending message IDs before sending,
 then dispatches only those IDs using explicit private `read-self` after send
 acceptance and local save. It never uses ordinary receipts or app-state recovery.
-The `reply` policy accepts the same explicit boundary; without it unread stays
-pending. Raw text exposes `--handled-through ID` and `--preserve-unread`.
+The `reply` policy accepts the same explicit boundary; without it the agent refuses to send. Raw text exposes `--handled-through ID` and `--preserve-unread`.
 The new `text_handled_reply` delegate kind makes older owners reject before
 sending instead of ignoring scope. File sends retain their preserve default.
 

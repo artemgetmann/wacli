@@ -140,6 +140,8 @@ func (a *App) MarkChatReadSelfThrough(ctx context.Context, jid types.JID, id str
 		// Nothing was sent, so omit the receipt type rather than claim dispatch.
 		return 0, "", nil
 	}
+	// The original anchor still bounds local settlement after completed IDs are filtered.
+	boundary := msgs[len(msgs)-1]
 	msgs, err = a.db.UnattemptedPrivateReadMessages(msgs)
 	if err != nil {
 		return 0, "", err
@@ -186,7 +188,6 @@ func (a *App) MarkChatReadSelfThrough(ctx context.Context, jid types.JID, id str
 	}
 	// Only the complete selection advances the fixed anchor. Newer messages,
 	// including later rows in the same second, remain outside the handled range.
-	boundary := msgs[len(msgs)-1]
 	if err := a.db.ClearChatUnreadThroughPreservingMarker(chatJID, boundary.Timestamp, []string{id}); err != nil {
 		return sent, types.ReceiptTypeReadSelf, fmt.Errorf("private receipts sent, but updating local unread state failed: %w", err)
 	}

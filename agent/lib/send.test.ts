@@ -20,7 +20,7 @@ test("connected but not send-ready refuses before dispatch and releases the oper
   const f = await fixture();
   try {
     let sends = 0;
-    await assert.rejects(productionSafeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello"], async () => { sends++; return accepted(); }, async () => ({ sendReady: false, message: "IPC startup is pending" })), /nothing was dispatched/);
+    await assert.rejects(productionSafeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello", "--handled-through", "REVIEWED"], async () => { sends++; return accepted(); }, async () => ({ sendReady: false, message: "IPC startup is pending" })), /nothing was dispatched/);
     assert.equal(sends, 0);
     await assert.rejects(fs.stat(path.join(f.dir, ".openclaw-send-safe.lock")), { code: "ENOENT" });
   } finally { await f.close(); }
@@ -30,7 +30,7 @@ test("readiness completes before exactly one uncertain send attempt", async () =
   const f = await fixture();
   try {
     const events: string[] = [];
-    const result = await productionSafeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello", "--settle-ms", "0"], async () => { events.push("send"); return { ok: false, exitCode: null, timedOut: true, stdout: "", stderr: "unknown outcome" }; }, async () => { events.push("ready"); return { sendReady: true }; });
+    const result = await productionSafeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello", "--handled-through", "REVIEWED", "--settle-ms", "0"], async () => { events.push("send"); return { ok: false, exitCode: null, timedOut: true, stdout: "", stderr: "unknown outcome" }; }, async () => { events.push("ready"); return { sendReady: true }; });
     assert.deepEqual(events, ["ready", "send"]);
     assert.equal(result.retryAttempted, false);
     assert.equal(result.readState.status, "not_attempted");
@@ -158,7 +158,7 @@ test("mapped LID receipts verify the canonical exact target without another send
     session.prepare("INSERT INTO whatsmeow_lid_map VALUES(?,?)").run("20001", "15551234567");
     f.db.prepare("INSERT INTO messages VALUES(?,?,1,'hello',NULL,NULL,NULL,NULL)").run(chat, "TEST-SENT");
     let sends = 0;
-    const result = await safeSend("text", ["--store", f.dir, "--to", "+1 (555) 123-4567", "--message", "hello"], async () => { sends++; return accepted({ to: "20001@lid" }); });
+    const result = await safeSend("text", ["--store", f.dir, "--to", "+1 (555) 123-4567", "--message", "hello", "--handled-through", "REVIEWED"], async () => { sends++; return accepted({ to: "20001@lid" }); });
     assert.equal(sends, 1);
     assert.equal(result.verification.status, "verified_local");
     assert.equal(result.verification.chatJid, chat);
@@ -181,17 +181,22 @@ test("an exact ID under another recipient cannot satisfy send verification", asy
 });
 
 
-test("ordinary reply without known handled input preserves unread", async () => {
+test("explicit preserve keeps unread for a proactive message", async () => {
  const f=await fixture();
  try {
   f.db.prepare("INSERT INTO messages VALUES(?,?,1,'hello',NULL,NULL,NULL,NULL)").run(chat,"TEST-SENT");
-  const result=await safeSend("text",["--store",f.dir,"--to",chat,"--message","hello"],async args=>{
+  const result=await safeSend("text",["--store",f.dir,"--to",chat,"--message","hello","--read-policy","preserve"],async args=>{
    assert.equal(args.includes("--preserve-unread"),true);
    assert.equal(args.includes("--handled-through"),false);
    return accepted({local_read:{status:"preserved",device_verified:false}});
   });
-  assert.equal(result.readState.status,"preserved");
+  assert.equal(result.readState.status,"not_attempted");
   assert.equal(result.readState.throughMessageId,undefined);
-  assert.equal(result.readState.deviceVerified,false);
  } finally {await f.close();}
+});
+
+test("ordinary agent reply without a reviewed ID stops before sending", async () => {
+  let sends = 0;
+  await assert.rejects(safeSend("text", ["--to", chat, "--message", "hello"], async () => { sends++; return accepted(); }), /Reply not sent: pass --handled-through/);
+  assert.equal(sends, 0);
 });

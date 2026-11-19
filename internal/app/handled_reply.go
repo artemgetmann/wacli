@@ -29,11 +29,6 @@ func CompleteHandledReply(ctx context.Context, db *store.DB, client WAClient, ch
 	if err = ctx.Err(); err != nil {
 		return state, err
 	}
-	// Durable claims both forbid a second attempt and protect against receipt
-	// echoes before completion or after reopening. Never erase a claim on error.
-	if err = db.ClaimHandledUnread(snapshot); err != nil {
-		return state, err
-	}
 	batches, err := readReceiptBatches(snapshot.Messages, chat.Server == types.GroupServer)
 	if err != nil {
 		return state, err
@@ -45,6 +40,14 @@ func CompleteHandledReply(ctx context.Context, db *store.DB, client WAClient, ch
 			return state, fmt.Errorf("private acknowledgement addressing unavailable: %v", lookupErr)
 		}
 		addressing = info.AddressingMode
+	}
+	if err = ctx.Err(); err != nil {
+		return state, err
+	}
+	// Durable claims both forbid a second attempt and protect against receipt
+	// echoes before completion or after reopening. Never erase a claim on error.
+	if err = db.ClaimHandledUnread(snapshot); err != nil {
+		return state, err
 	}
 	state.ReceiptType = string(types.ReceiptTypeReadSelf)
 	for _, batch := range batches {
