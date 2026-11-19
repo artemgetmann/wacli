@@ -52,6 +52,31 @@ test("ensure waits for IPC readiness despite a connected owner without restartin
   } finally { await fs.rm(dir, {recursive: true, force: true}); }
 });
 
+test("send waits for sync to reconnect and never replaces a running owner", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "wacli-reconnect-"));
+  try {
+    // Cover startup grace, a reconnect longer than the repair grace, and a
+    // persistent failure. All three use the same bounded send preflight.
+    for (const [age, readyAt] of [[1000, 500], [60_000, 7000], [60_000, Infinity]]) {
+      let now = 0;
+      const result = await ensureOwner({ command: "ensure", json: true, storeDir: dir,
+        settleMs: 8000, graceMs: 1, timeoutMs: 1, tailLines: 40, preserveRunningOwner: true }, {
+        collectStatus: async () => ({
+          ok: true, action: "ensure", storeDir: dir, pidFile: "", logFile: "",
+          ownerRunning: true, ownerCommandMatches: true, ownerAgeMs: age + now,
+          lockHeldByOwner: true, lastLifecycleEvent: now >= readyAt ? "connected" : "reconnecting",
+          connected: now >= readyAt, sendReady: now >= readyAt, logTail: [], message: "",
+        }),
+        now: () => now, sleep: async (ms) => { now += ms; },
+        startOwner: async () => { assert.fail("send started a competing owner"); },
+        stopOwner: async () => { assert.fail("send interrupted sync"); },
+      });
+      assert.equal(now, Math.min(readyAt, 8000));
+      assert.equal(result.sendReady, now >= readyAt);
+    }
+  } finally { await fs.rm(dir, {recursive: true, force: true}); }
+});
+
 test("readiness refuses missing, stale, incompatible, wrong-PID and unreachable sockets", { skip: process.platform === "win32" }, async () => {
   const dir = await fs.mkdtemp(path.join(process.platform === "darwin" ? "/tmp" : os.tmpdir(), "wp-"));
   const socketPath = path.join(dir, ".send.sock");

@@ -592,7 +592,7 @@ const defaultEnsureOwnerDeps: EnsureOwnerDeps = {
 };
 
 export async function ensureOwner(
-  flags: Flags,
+  flags: Flags & { preserveRunningOwner?: boolean },
   deps: EnsureOwnerDeps = defaultEnsureOwnerDeps,
 ): Promise<LiveStatus> {
   requireWritable("owner ensure");
@@ -617,10 +617,9 @@ export async function ensureOwner(
   }
 
   if (initial.ownerRunning && initial.ownerCommandMatches) {
-    if (!isExplicitlyUnhealthyOwner(initial)) {
-      // Connected can precede socket bind, and old daemons cannot prove ping
-      // readiness. Wait within the existing startup budget, without churning a
-      // connected process or dispatching a message to test it.
+    if (flags.preserveRunningOwner || !isExplicitlyUnhealthyOwner(initial)) {
+      // Sends let sync finish its own reconnect. Connected can also precede
+      // socket readiness, so wait for a successful ping in either case.
       const deadline = deps.now() + flags.settleMs;
       while (initial.ownerRunning && initial.ownerCommandMatches && !initial.sendReady && deps.now() < deadline) {
         await deps.sleep(Math.min(500, Math.max(1, deadline - deps.now())));
