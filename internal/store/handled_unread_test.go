@@ -221,7 +221,7 @@ func TestHandledUnreadInitialMigrationShapeKeepsAttemptsUncertain(t *testing.T) 
 	}
 	// Reopen the initial, unreleased migration36 layout. There is no evidence
 	// of successful completion to infer from its attempted bit or unread count.
-	if _, err = d.sql.Exec(`ALTER TABLE inbound_read_state DROP COLUMN completed`); err != nil {
+	if _, err = d.sql.Exec(`DROP INDEX idx_private_attempt_by_id; ALTER TABLE inbound_read_state DROP COLUMN completed`); err != nil {
 		t.Fatal(err)
 	}
 	if err = d.Close(); err != nil {
