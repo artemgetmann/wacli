@@ -46,7 +46,7 @@ func TestAppStateDeliveryMigrationPreservesVersion33DataAndDebt(t *testing.T) {
 	}
 	var version int
 	must(d.sql.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	if version != 35 {
+	if version != 36 {
 		t.Fatalf("migration version %d", version)
 	}
 	for _, table := range []string{"app_state_delivery_checkpoint", "app_state_delivery_recovery"} {

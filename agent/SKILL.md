@@ -25,15 +25,25 @@ Never send without explicit current-chat recipient/payload authority.
 Use one narrow final conversation/account/recipient check immediately before an
 authorized send; reuse that check within the same dispatch boundary. If new
 activity materially changes the approved response, obtain approval for revised
-wording. Pass exact payload as a UTF-8 file/stdin; do not interpolate it in shell
-code or use escape rewriting.
+wording. Pass the approved text as exact UTF-8 bytes. For a single-line reply,
+write the file without a trailing newline (for example, Python
+`Path.write_bytes(approved_text.encode("utf-8"))`). Check those bytes against
+the approved text before sending. Keep intentional line breaks. A shell
+here-document or `echo` normally adds a newline; do not use either for a
+single-line payload. Never interpolate message content in shell code.
 
-Reads, summaries, and drafts preserve unread state. Safe-send defaults to
-`--read-policy preserve`. Only if all requests through a known inbound snapshot
-are resolved, add `--read-policy handled --handled-through <message-id>`.
-Partial answers, unavailable voice notes, and new inbound remain pending.
+Reads, summaries and drafts preserve unread. With an approved text reply,
+pass `--handled-through <message-id>` for the last incoming message you showed
+the user, even if the reply answers only some questions. Keep later input
+unread unless you show it to the user and they approve an updated reply.
+Recover a missing ID from the original pull. Never substitute the latest ID
+or use preserve merely to bypass the missing-ID error. For proactive messages
+or an explicit request to leave unread alone, use `--read-policy preserve`.
 Handled state uses private `read-self` updates with an exact inbound boundary;
 it does not change account privacy settings or wait for app-state recovery.
+Text sends capture pending IDs in the same owner before dispatch. Unknown legacy
+counts or manual markers defer acknowledgement; do not add a second mark-read
+command to override that outcome. Private attempts are never automatically retried.
 Do not use sender-facing `--receipts` to implement handled state.
 
 Transport acceptance, local verification, visible quote rendering, recipient

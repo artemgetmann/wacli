@@ -20,7 +20,7 @@ test("connected but not send-ready refuses before dispatch and releases the oper
   const f = await fixture();
   try {
     let sends = 0;
-    await assert.rejects(productionSafeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello"], async () => { sends++; return accepted(); }, async () => ({ sendReady: false, message: "IPC startup is pending" })), /nothing was dispatched/);
+    await assert.rejects(productionSafeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello", "--handled-through", "REVIEWED"], async () => { sends++; return accepted(); }, async () => ({ sendReady: false, message: "IPC startup is pending" })), /nothing was dispatched/);
     assert.equal(sends, 0);
     await assert.rejects(fs.stat(path.join(f.dir, ".openclaw-send-safe.lock")), { code: "ENOENT" });
   } finally { await f.close(); }
@@ -30,10 +30,10 @@ test("readiness completes before exactly one uncertain send attempt", async () =
   const f = await fixture();
   try {
     const events: string[] = [];
-    const result = await productionSafeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello", "--settle-ms", "0"], async () => { events.push("send"); return { ok: false, exitCode: null, timedOut: true, stdout: "", stderr: "unknown outcome" }; }, async () => { events.push("ready"); return { sendReady: true }; });
+    const result = await productionSafeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello", "--handled-through", "REVIEWED", "--settle-ms", "0"], async () => { events.push("send"); return { ok: false, exitCode: null, timedOut: true, stdout: "", stderr: "unknown outcome" }; }, async () => { events.push("ready"); return { sendReady: true }; });
     assert.deepEqual(events, ["ready", "send"]);
     assert.equal(result.retryAttempted, false);
-    assert.equal(result.readState.status, "not_attempted");
+    assert.equal(result.readState.status, "unverified");
     assert.ok(result.timings.ownerReadyMs >= 0);
   } finally { await f.close(); }
 });
@@ -50,7 +50,7 @@ test("exact multiline text and quote pass through; inspection does not mark read
     const text = "line one\n`$(not-a-shell-command)` $literal";
     const calls: string[][] = [];
     f.db.prepare("INSERT INTO messages VALUES(?,?,1,?,NULL,NULL,NULL,?)").run(chat, "TEST-SENT", text, "ORIGINAL");
-    const result = await safeSend("text", ["--store", f.dir, "--to", chat, "--message", text, "--reply-to", "ORIGINAL"], async (args) => { calls.push(args); return accepted(); });
+    const result = await safeSend("text", ["--store", f.dir, "--to", chat, "--message", text, "--reply-to", "ORIGINAL", "--read-policy", "preserve"], async (args) => { calls.push(args); return accepted(); });
     assert.equal(calls.length, 1);
     assert.equal(calls[0][calls[0].indexOf("--message") + 1], text);
     assert.equal(calls[0][calls[0].indexOf("--reply-to") + 1], "ORIGINAL");
@@ -76,44 +76,43 @@ test("file receipt is structured and verifies attachment hash, not just caption"
   } finally { await f.close(); }
 });
 
-test("accepted send plus 409 read-state failure never resends", async () => {
+test("accepted send plus owner acknowledgement failure never resends", async () => {
   const f = await fixture();
   try {
     f.db.prepare("INSERT INTO messages VALUES(?,?,1,'hello',NULL,NULL,NULL,NULL)").run(chat, "TEST-SENT");
     const calls: string[][] = [];
     const result = await safeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello", "--read-policy", "handled", "--handled-through", "HANDLED"], async (args) => {
       calls.push(args);
-      return args.includes("mark-read") ? { ok: false, exitCode: 1, timedOut: false, stderr: "", stdout: JSON.stringify({ success: false, error: "409 conflict" }) } : accepted();
+      return accepted({local_read:{status:"uncertain",through_message_id:"HANDLED",warning:"private acknowledgement outcome unavailable"}});
     });
     assert.equal(calls.filter((args) => args.includes("send")).length, 1);
-    assert.ok(calls[1].includes("--through-message-id"));
-    assert.ok(calls[1].includes("--self-only"));
-    assert.ok(!calls[1].includes("--receipts"));
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][calls[0].indexOf("--handled-through") + 1], "HANDLED");
+    assert.ok(!calls[0].includes("--receipts"));
     assert.equal(result.ok, true);
     assert.equal(result.verification.status, "verified_local");
-    assert.equal(result.readState.status, "failed");
+    assert.equal(result.readState.status, "uncertain");
     assert.equal(result.retryAttempted, false);
   } finally { await f.close(); }
 });
 
-test("handled send verifies first and marks only the requested boundary on our own devices", async () => {
+test("handled send passes scope to the owner before dispatch and never issues a second mark-read command", async () => {
   const f = await fixture();
   try {
     f.db.prepare("INSERT INTO messages VALUES(?,?,1,'hello',NULL,NULL,NULL,NULL)").run(chat, "TEST-SENT");
     const calls: string[][] = [];
     const result = await safeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello", "--read-policy", "handled", "--handled-through", "OLDER-INBOUND"], async (args) => {
       calls.push(args);
-      return args.includes("mark-read") ? { ok: true, exitCode: 0, timedOut: false, stderr: "", stdout: JSON.stringify({ success: true, data: { receipt: "read-self", sender_notified: false } }) } : accepted();
+      return accepted({local_read:{status:"dispatched",through_message_id:"OLDER-INBOUND",receipt_type:"read-self",receipts:1}});
     });
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 1);
     assert.ok(calls[0].includes("send"));
-    assert.ok(calls[1].includes("mark-read"));
-    assert.ok(calls[1].includes("--self-only"));
-    assert.ok(!calls[1].includes("--receipts"));
-    assert.equal(calls[1][calls[1].indexOf("--chat") + 1], chat);
-    assert.equal(calls[1][calls[1].indexOf("--through-message-id") + 1], "OLDER-INBOUND");
+    assert.ok(!calls[0].includes("mark-read"));
+    assert.ok(!calls[0].includes("--receipts"));
+    assert.equal(calls[0][calls[0].indexOf("--handled-through") + 1], "OLDER-INBOUND");
     assert.equal(result.verification.status, "verified_local");
-    assert.equal(result.readState.status, "marked");
+    assert.equal(result.readState.status, "dispatched");
+    assert.equal(result.readState.receiptType, "read-self");
     assert.equal(result.retryAttempted, false);
   } finally { await f.close(); }
 });
@@ -139,7 +138,7 @@ test("store warning and malformed/post-dispatch receipts do not trigger read or 
       const result = await safeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello", "--read-policy", "handled", "--handled-through", "OLD", "--settle-ms", "0"], async () => { calls++; return raw; });
       assert.equal(calls, 1);
       assert.equal(result.verification.status, "unverified");
-      assert.equal(result.readState.status, "not_attempted");
+      assert.equal(result.readState.status, "unverified");
     }
   } finally { await f.close(); }
 });
@@ -158,11 +157,11 @@ test("mapped LID receipts verify the canonical exact target without another send
     session.prepare("INSERT INTO whatsmeow_lid_map VALUES(?,?)").run("20001", "15551234567");
     f.db.prepare("INSERT INTO messages VALUES(?,?,1,'hello',NULL,NULL,NULL,NULL)").run(chat, "TEST-SENT");
     let sends = 0;
-    const result = await safeSend("text", ["--store", f.dir, "--to", "+1 (555) 123-4567", "--message", "hello"], async () => { sends++; return accepted({ to: "20001@lid" }); });
+    const result = await safeSend("text", ["--store", f.dir, "--to", "+1 (555) 123-4567", "--message", "hello", "--handled-through", "REVIEWED"], async () => { sends++; return accepted({ to: "20001@lid" }); });
     assert.equal(sends, 1);
     assert.equal(result.verification.status, "verified_local");
     assert.equal(result.verification.chatJid, chat);
-    assert.equal(result.readState.status, "not_attempted");
+    assert.equal(result.readState.status, "unverified");
   } finally { session.close(); await f.close(); }
 });
 
@@ -176,6 +175,41 @@ test("an exact ID under another recipient cannot satisfy send verification", asy
     assert.equal(calls, 1);
     assert.equal(result.verification.status, "unverified");
     assert.match(result.verification.reason, /recipient/);
-    assert.equal(result.readState.status, "not_attempted");
+    assert.equal(result.readState.status, "unverified");
+  } finally { await f.close(); }
+});
+
+
+test("explicit preserve keeps unread for a proactive message", async () => {
+ const f=await fixture();
+ try {
+  f.db.prepare("INSERT INTO messages VALUES(?,?,1,'hello',NULL,NULL,NULL,NULL)").run(chat,"TEST-SENT");
+  const result=await safeSend("text",["--store",f.dir,"--to",chat,"--message","hello","--read-policy","preserve"],async args=>{
+   assert.equal(args.includes("--preserve-unread"),true);
+   assert.equal(args.includes("--handled-through"),false);
+   return accepted({local_read:{status:"preserved",device_verified:false}});
+  });
+  assert.equal(result.readState.status,"not_attempted");
+  assert.equal(result.readState.throughMessageId,undefined);
+ } finally {await f.close();}
+});
+
+test("ordinary agent reply without a reviewed ID stops before sending", async () => {
+  let sends = 0;
+  await assert.rejects(safeSend("text", ["--to", chat, "--message", "hello"], async () => { sends++; return accepted(); }), /Reply not sent: pass --handled-through/);
+  assert.equal(sends, 0);
+});
+
+test("lost response after owner-side settlement leaves unread outcome unverified", async () => {
+  const f = await fixture();
+  try {
+    let ownerSettled = false;
+    const result = await safeSend("text", ["--store", f.dir, "--to", chat, "--message", "hello", "--handled-through", "BOUNDARY"], async () => {
+      ownerSettled = true;
+      return { ok: false, exitCode: null, stdout: "", stderr: "response lost", timedOut: true };
+    });
+    assert.ok(ownerSettled);
+    assert.equal(result.readState.status, "unverified");
+    assert.equal(result.retryAttempted, false);
   } finally { await f.close(); }
 });

@@ -134,9 +134,20 @@ func (d *DB) SetChatMutedUntil(jid string, mutedUntil int64) error {
 }
 
 func (d *DB) SetChatUnread(jid string, unread bool) error {
-	return setChatUnreadOn(d.sql, jid, unread)
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = setChatUnreadOn(tx, jid, unread); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func setChatUnreadOn(db stateExecer, jid string, unread bool) error {
+	if _, err := db.ExecContext(storeCtx(), "UPDATE inbound_read_state SET pending=0 WHERE chat_jid=?", jid); err != nil {
+		return err
+	}
 	if unread {
 		_, err := db.ExecContext(storeCtx(), `
 			INSERT INTO chats(jid, kind, unread)
@@ -154,6 +165,14 @@ func setChatUnreadOn(db stateExecer, jid string, unread bool) error {
 }
 
 func (d *DB) SetChatUnreadCount(jid string, count int) error {
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("UPDATE inbound_read_state SET pending=0 WHERE chat_jid=?", jid); err != nil {
+		return err
+	}
 	if count < 0 {
 		count = 0
 	}
@@ -161,12 +180,15 @@ func (d *DB) SetChatUnreadCount(jid string, count int) error {
 	if count > 0 {
 		unread = 1
 	}
-	_, err := d.sql.ExecContext(storeCtx(), `
+	_, err = tx.ExecContext(storeCtx(), `
 		INSERT INTO chats(jid, kind, unread, unread_count)
 		VALUES(?, 'unknown', ?, ?)
 		ON CONFLICT(jid) DO UPDATE SET unread=excluded.unread, unread_count=excluded.unread_count
 	`, jid, unread, count)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (d *DB) IncrementChatUnread(jid string) error {

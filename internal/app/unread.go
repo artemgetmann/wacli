@@ -14,6 +14,17 @@ import (
 // not carry the originating CLI flags, so preserve an existing marker whenever
 // newer readable rows remain. Timestamp-only events keep their legacy behavior.
 func (a *App) clearChatUnreadFromEvent(chat string, through time.Time, ids []string) error {
+	// Coarse app-state echoes are no stronger than receipt echoes: an earlier
+	// private attempt must not authorize clearing work added afterward. A user
+	// explicitly issuing mark-read still uses the separate command/store path.
+	guardChat := ""
+	if len(ids) == 0 {
+		guardChat = chat
+	}
+	guarded, err := a.db.HasPrivateReadAttempt(guardChat, ids)
+	if err != nil || guarded {
+		return err
+	}
 	for _, id := range ids {
 		if strings.TrimSpace(id) != "" {
 			return a.db.ClearChatUnreadThroughPreservingMarker(chat, through, ids)

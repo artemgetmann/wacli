@@ -484,6 +484,21 @@ func readByThisAccountElsewhere(evt *events.Receipt) bool {
 func (a *App) handleReceiptEvent(ctx context.Context, evt *events.Receipt) {
 	chat := a.canonicalStoreJID(ctx, evt.Chat)
 	chatJID := canonicalJIDString(chat)
+	ids := make([]string, 0, len(evt.MessageIDs))
+	for _, id := range evt.MessageIDs {
+		ids = append(ids, string(id))
+	}
+	// An attempted private receipt can echo before a later batch fails or long
+	// after completion/restart. It is not authority to clear a history prefix.
+	// Mixed/missing identities defer conservatively instead of widening scope.
+	guardChat := ""
+	if len(ids) == 0 {
+		guardChat = chatJID
+	}
+	guarded, guardErr := a.db.HasPrivateReadAttempt(guardChat, ids)
+	if guardErr != nil || guarded {
+		return
+	}
 	through, ids, err := a.receiptReadPosition(chatJID, evt)
 	if err == nil {
 		err = a.clearChatUnreadFromEvent(chatJID, through, ids)
@@ -875,7 +890,10 @@ func (a *App) storeHistoryCallLogRecords(ctx context.Context, v *events.HistoryS
 
 func (a *App) incrementLiveUnread(ctx context.Context, pm wa.ParsedMessage) {
 	chat := a.canonicalStoreJID(ctx, pm.Chat)
-	if err := a.db.IncrementChatUnread(canonicalJIDString(chat)); err != nil {
+	if err := a.db.TrackLiveUnread(canonicalJIDString(chat), pm.ID); err != nil {
+		// Unknown/ineligible input remains visible as pending even when exact
+		// membership could not be recorded. Never infer membership from it later.
+		_ = a.db.IncrementChatUnread(canonicalJIDString(chat))
 		a.emitWarning(
 			"live_unread_store_failed",
 			fmt.Sprintf("warning: failed to increment unread count for chat %s: %v", chat, err),

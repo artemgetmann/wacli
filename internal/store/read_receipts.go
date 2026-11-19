@@ -123,8 +123,18 @@ func (d *DB) readReceiptCandidates(jid, throughID string, limit int) ([]MessageI
 // to acknowledge. Recheck eligibility atomically so an arrival after selection
 // keeps its count or marker. No message read boundary or network state changes.
 func (d *DB) ClearChatUnreadMarker(jid string) error {
-	_, err := d.sql.ExecContext(storeCtx(), "UPDATE chats SET unread = 0, unread_count = 0 WHERE jid = ? AND NOT EXISTS (SELECT 1 FROM messages WHERE "+receiptEligible+")", jid, jid)
-	return err
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`UPDATE inbound_read_state SET pending=0 WHERE chat_jid=?`, jid); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(storeCtx(), "UPDATE chats SET unread = 0, unread_count = 0 WHERE jid = ? AND NOT EXISTS (SELECT 1 FROM messages WHERE "+receiptEligible+")", jid, jid); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SelfReadReceiptCandidatesThrough resolves the inbound anchor and its entire

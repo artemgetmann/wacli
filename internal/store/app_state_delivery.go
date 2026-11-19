@@ -165,7 +165,14 @@ func (d *DB) ApplyAppStateDelivery(ctx context.Context, id DeliveryCheckpoint, a
 			if !a.Enabled {
 				err = setChatUnreadOn(tx, a.JID, true)
 			} else {
-				err = clearChatUnreadThroughOn(tx, a.JID, a.ReadThrough, a.ReadIDs, len(uniqueNonEmptyStrings(a.ReadIDs)) > 0)
+				// A private read-self echo can carry an old coarse boundary.
+				// Keep newer unread intact, while still consuming this native
+				// delivery and committing its durable checkpoint.
+				var attempted bool
+				attempted, err = privateReadProjectionAttempt(tx, a.JID, a.ReadIDs)
+				if err == nil && !attempted {
+					err = clearChatUnreadThroughOn(tx, a.JID, a.ReadThrough, a.ReadIDs, len(uniqueNonEmptyStrings(a.ReadIDs)) > 0)
+				}
 			}
 		default:
 			return fmt.Errorf("unknown covered app state projection %q", a.Kind)
@@ -283,4 +290,24 @@ func (d *DB) AppStateDeliveryCheckpoints(ctx context.Context) ([]DeliveryCheckpo
 		out = append(out, cp)
 	}
 	return out, rows.Err()
+}
+
+// privateReadProjectionAttempt is deliberately scoped to native projections,
+// rather than explicit user read commands. Unknown-ID projections cannot prove
+// that they are independent of an earlier private dispatch in this chat.
+func privateReadProjectionAttempt(tx *sql.Tx, jid string, ids []string) (bool, error) {
+	ids = uniqueNonEmptyStrings(ids)
+	if len(ids) == 0 {
+		var attempted bool
+		err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM inbound_read_state WHERE chat_jid=? AND attempted=1)`, jid).Scan(&attempted)
+		return attempted, err
+	}
+	for _, id := range ids {
+		var attempted bool
+		err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM inbound_read_state WHERE msg_id=? AND attempted=1)`, id).Scan(&attempted)
+		if err != nil || attempted {
+			return attempted, err
+		}
+	}
+	return false, nil
 }

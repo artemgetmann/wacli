@@ -42,6 +42,8 @@ type sendDelegateRequest struct {
 	ReplyToSender        string   `json:"reply_to_sender,omitempty"`
 	NoPreview            bool     `json:"no_preview,omitempty"`
 	AllowSelf            bool     `json:"allow_self,omitempty"`
+	PreserveUnread       bool     `json:"preserve_unread,omitempty"`
+	HandledThrough       string   `json:"handled_through,omitempty"`
 	Ephemeral            bool     `json:"ephemeral,omitempty"`
 	EphemeralDuration    string   `json:"ephemeral_duration,omitempty"`
 	EphemeralDurationSet bool     `json:"ephemeral_duration_set,omitempty"`
@@ -84,6 +86,7 @@ type sendDelegateRequest struct {
 }
 
 type sendDelegateResponse struct {
+	LocalRead      *textReplyReadState  `json:"local_read,omitempty"`
 	OK             bool                 `json:"ok"`
 	Error          string               `json:"error,omitempty"`
 	Sent           bool                 `json:"sent,omitempty"`
@@ -390,6 +393,14 @@ func executeDelegatedSend(parent context.Context, a *app.App, req sendDelegateRe
 	}
 	ctx, cancel := context.WithTimeout(parent, millisDuration(req.TimeoutMS, 5*time.Minute))
 	defer cancel()
+	// A distinct request kind is essential: an old owner must reject handled
+	// sends before dispatch, rather than ignore a new field and broaden scope.
+	if req.HandledThrough != "" && req.Kind != handledTextKind {
+		return sendDelegateResponse{}, fmt.Errorf("handled scope requires the bounded text delegate")
+	}
+	if req.Kind == handledTextKind && (req.HandledThrough == "" || req.PreserveUnread) {
+		return sendDelegateResponse{}, fmt.Errorf("handled text requires an explicit boundary and cannot preserve unread")
+	}
 
 	switch req.Kind {
 	case mediaDownloadKind:
@@ -398,7 +409,7 @@ func executeDelegatedSend(parent context.Context, a *app.App, req sendDelegateRe
 		}
 		result, err := executeExactMediaDownload(ctx, a, req.To, req.ID, req.RetryOnPhone)
 		return sendDelegateResponse{OK: err == nil, Media: result}, err
-	case "text":
+	case "text", handledTextKind:
 		return executeDelegatedText(ctx, a, req)
 	case "file", "voice":
 		return executeDelegatedFile(ctx, a, req)
@@ -600,7 +611,13 @@ func executeDelegatedEdit(ctx context.Context, a *app.App, req sendDelegateReque
 	return sendDelegateResponse{OK: true, Sent: true, To: chatJID.String(), ID: string(sentID), Target: msg.MsgID}, nil
 }
 
-func executeDelegatedText(ctx context.Context, a *app.App, req sendDelegateRequest) (sendDelegateResponse, error) {
+type delegatedTextApp interface {
+	sendTextApp
+	StoreDir() string
+	Connect(context.Context, bool, func(string)) error
+}
+
+func executeDelegatedText(ctx context.Context, a delegatedTextApp, req sendDelegateRequest) (sendDelegateResponse, error) {
 	ephemeral := textEphemeralOptions{
 		Enabled:     req.Ephemeral,
 		Duration:    req.EphemeralDuration,
@@ -628,12 +645,13 @@ func executeDelegatedText(ctx context.Context, a *app.App, req sendDelegateReque
 	}
 	preview, previewWarning := fetchLinkPreview(ctx, req.Message, req.NoPreview)
 	var thumbnailWarning string
-	msgID, storeErr, err := sendTextWithHistory(ctx, a, reconnectForSend(a), toJID, req.Message, req.ReplyTo, req.ReplyToSender, preview, mentionedJIDs, ephemeral, textSendOptions{allowSelf: req.AllowSelf, warn: func(msg string) { thumbnailWarning = msg }})
+	localRead := textReplyReadState{Status: "not_attempted"}
+	msgID, storeErr, err := sendTextWithHistory(ctx, a, reconnectForSend(a), toJID, req.Message, req.ReplyTo, req.ReplyToSender, preview, mentionedJIDs, ephemeral, textSendOptions{allowSelf: req.AllowSelf, preserveUnread: req.PreserveUnread, handledThrough: req.HandledThrough, localRead: &localRead, warn: func(msg string) { thumbnailWarning = msg }})
 	if err != nil {
-		return sendDelegateResponse{}, err
+		return sendDelegateResponse{LocalRead: &localRead}, err
 	}
 	waitForPostSendRetryReceipts(ctx, millisDuration(req.PostSendWaitMS, 0))
-	resp := sendDelegateResponse{OK: true, Sent: true, To: toJID.String(), ID: string(msgID), PreviewWarning: previewWarning, ThumbWarning: thumbnailWarning}
+	resp := sendDelegateResponse{LocalRead: &localRead, OK: true, Sent: true, To: toJID.String(), ID: string(msgID), PreviewWarning: previewWarning, ThumbWarning: thumbnailWarning}
 	if storeErr != nil {
 		resp.StoreWarning = storeErr.Error()
 	}
@@ -745,6 +763,9 @@ func writeDelegatedSendOutput(flags *rootFlags, kind string, resp sendDelegateRe
 	warnSendStoreFailureMsg(os.Stderr, resp.ID, resp.StoreWarning)
 	if flags.asJSON {
 		body := map[string]any{"sent": resp.Sent, "to": resp.To, "id": resp.ID}
+		if resp.LocalRead != nil {
+			body["local_read"] = resp.LocalRead
+		}
 		if resp.File != nil {
 			body["file"] = resp.File
 		}
@@ -800,7 +821,7 @@ func writeDelegatedSendOutput(flags *rootFlags, kind string, resp sendDelegateRe
 	return nil
 }
 
-func warmupDelegatedRecipient(ctx context.Context, a *app.App, jid types.JID) types.JID {
+func warmupDelegatedRecipient(ctx context.Context, a interface{ WA() app.WAClient }, jid types.JID) types.JID {
 	return warmupRecipient(ctx, a.WA(), jid, os.Stderr)
 }
 
