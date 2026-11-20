@@ -43,6 +43,7 @@
 - No build-time CGO beyond sqlite3; keep the dependency tree minimal.
 
 ## Testing Guidelines
+- Before choosing live account tests, read [Agent testing runbook](docs/agent-testing.md): offline defaults, reuse of scoped own-recipient permission, runtime verification, and one-attempt evidence.
 - Every bug fix should ship with a regression test.
 - FTS-sensitive tests must run under `-tags sqlite_fts5`; non-FTS path tests must also pass without the tag.
 - Use `fake_wa_test.go` / table-driven tests for whatsmeow interaction; avoid hitting real WhatsApp in unit tests.
