@@ -42,6 +42,14 @@ the matched process. Safe sends wait within the existing owner startup limit
 before dispatching; an unready owner means nothing was sent. IPC binds before
 unrelated app-state recovery, and invalid long socket paths fail setup early.
 
+Scope freshness requirements to the requested action. Return available content
+for requested reads, qualifying unverified coverage. An old sync milestone
+alone does not block an otherwise safe, authorized unconditional send.
+Any action conditional on no reply needs sufficient current recipient history,
+whether manually requested or autonomous. Existing authorization, final-check,
+sender-readiness and uncertain-send reconciliation requirements still apply.
+See agent/SKILL.md for the action distinctions.
+
 ## Sends and pending work
 
 The safe path requests upstream JSON receipts, dispatches once, and reconciles
