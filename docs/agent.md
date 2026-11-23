@@ -47,7 +47,9 @@ unrelated app-state recovery, and invalid long socket paths fail setup early.
 The safe path requests upstream JSON receipts, dispatches once, and reconciles
 the exact chat/message ID against read-only history. Attachments require a
 matching plaintext hash, media type and caption; caption alone is not proof.
-It uses upstream daemon delegation and does not routinely stop the sync owner.
+With no sync owner, it sends using a short-lived connection. With a known running
+owner, it waits for readiness and delegates once. If readiness times out or ownership
+is unclear, the preflight refuses the send. Sending never starts or restarts background sync.
 
 Agent text replies require the ID of the last incoming message shown to the user
 when they approved the reply, even if they chose to answer only some questions.

@@ -610,6 +610,29 @@ const defaultEnsureOwnerDeps: EnsureOwnerDeps = {
   stopOwner: async (flags) => await stopOwner(flags),
 };
 
+type ReadinessDeps = Pick<EnsureOwnerDeps, "collectStatus" | "now" | "sleep">;
+
+// Observe the running owner only. Startup and reconnect can both precede
+// socket readiness; neither is a reason for a sender to signal the process.
+async function waitForReady(flags: Flags, status: LiveStatus, deps: ReadinessDeps) {
+  const deadline = deps.now() + flags.settleMs;
+  while (status.ownerRunning && status.ownerCommandMatches && !status.sendReady && deps.now() < deadline) {
+    await deps.sleep(Math.min(500, Math.max(1, deadline - deps.now())));
+    status = await deps.collectStatus(flags);
+  }
+  return status;
+}
+
+export async function inspectSendOwner(flags: Flags, deps: ReadinessDeps = defaultEnsureOwnerDeps) {
+  const status = await waitForReady(flags, await deps.collectStatus(flags), deps);
+  // Missing metadata alone cannot rule out a live lock holder. The raw CLI
+  // still acquires the kernel lock or delegates if ownership changes after this check.
+  const direct = !status.ownerRunning && !status.ownerIdentityUnknown && !status.lockPidRunning;
+  const message = !status.ownerRunning && status.lockPidRunning
+    ? "A live process holds the store lock, but its owner identity is unknown." : status.message;
+  return {direct, sendReady: status.sendReady, message};
+}
+
 export async function ensureOwner(
   flags: Flags,
   deps: EnsureOwnerDeps = defaultEnsureOwnerDeps,
@@ -644,12 +667,7 @@ export async function ensureOwner(
       // Connected can precede socket bind, and old daemons cannot prove ping
       // readiness. Wait within the existing startup budget, without churning a
       // connected process or dispatching a message to test it.
-      const deadline = deps.now() + flags.settleMs;
-      while (initial.ownerRunning && initial.ownerCommandMatches && !initial.sendReady && deps.now() < deadline) {
-        await deps.sleep(Math.min(500, Math.max(1, deadline - deps.now())));
-        initial = await deps.collectStatus(flags);
-      }
-      return initial;
+      return waitForReady(flags, initial, deps);
     }
 
     // A newly spawned owner commonly reports reconnecting before its first
