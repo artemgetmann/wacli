@@ -84,6 +84,8 @@ including after restart; completed old IDs are skipped when an explicit private
 read progresses to new input. Never resend the accepted reply to repair read state.
 Device behavior and preservation of concurrent remote unread require controlled
 live acceptance. `device_verified` remains false until separately observed.
+See the [matched iPhone unread test](matched-iphone-unread.md) for the live
+comparison of exact message IDs and a read-through boundary.
 
 JSON keeps transport acceptance (`send.accepted`), `verification`, `quote`,
 and `readState` separate. `verified_local_metadata` does not prove recipient
